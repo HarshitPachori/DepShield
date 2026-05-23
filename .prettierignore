@@ -1,0 +1,16 @@
+node_modules
+.next
+dist
+build
+coverage
+.env
+*.log
+.vscode
+.build
+.open-next
+*.d.ts
+*.config.mjs
+.husky
+.wrangler
+*.vars
+*.md
