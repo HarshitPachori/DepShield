@@ -91,7 +91,7 @@ const components: Components = {
 	// 2. Safely extract language and code from pre's children
 	pre: ({ children }) => {
 		// react-markdown nests <code> inside <pre>
-		const codeElement = React.Children.toArray(children)[0] as React.ReactElement;
+		const codeElement = React.Children.toArray(children)[0] as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
 
 		const language = codeElement?.props?.className?.replace('language-', '') || 'text';
 		const rawCode = String(codeElement?.props?.children || '').replace(/\n$/, '');
