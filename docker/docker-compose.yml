@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: elasticsearch:8.13.0
+    container_name: depshield-elastic
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.license.self_generated.type=basic
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - '9200:9200'
+      - '9300:9300'
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:9200 || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  es_data:
+    driver: local
