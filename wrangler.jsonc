@@ -11,7 +11,10 @@
 	"name": "depshield",
 	"main": ".open-next/worker.js",
 	"compatibility_date": "2026-05-23",
-	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".open-next/assets",
@@ -33,6 +36,19 @@
 		"enabled": true,
 	},
 	"upload_source_maps": true,
+	"d1_databases": [
+		{
+			"binding": "y",
+			"database_name": "depshield",
+			"database_id": "1e32754c-14ec-4e83-9af6-19f5ddafd545"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "depshield_cache",
+			"id": "4fc014c106ee467a9fa76b53c6325b86"
+		}
+	],
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
