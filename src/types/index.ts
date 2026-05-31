@@ -61,6 +61,12 @@ export interface EcosystemDetection {
 	dependencyFile: string | null;
 	lockFile: string | null;
 	supported: boolean;
+	basePath: string;
+	allDetected: Array<{
+		ecosystem: Ecosystem;
+		supported: boolean;
+		basePath: string;
+	}>;
 }
 
 export interface AffectedFile {
