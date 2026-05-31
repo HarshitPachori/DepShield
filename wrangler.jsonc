@@ -23,14 +23,15 @@
 	"upload_source_maps": true,
 	"d1_databases": [
 		{
-			"binding": "y",
+			"binding": "DB",
 			"database_name": "depshield",
 			"database_id": "1e32754c-14ec-4e83-9af6-19f5ddafd545",
+			"migrations_dir": "./src/backend/db/migrations",
 		},
 	],
 	"kv_namespaces": [
 		{
-			"binding": "depshield_cache",
+			"binding": "KV",
 			"id": "4fc014c106ee467a9fa76b53c6325b86",
 		},
 	],

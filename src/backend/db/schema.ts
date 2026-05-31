@@ -1,5 +1,4 @@
-import { integer } from 'drizzle-orm/gel-core';
-import { sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const users = sqliteTable('users', {
 	id: text('id')
@@ -28,7 +27,7 @@ export const patTokens = sqliteTable('pat_tokens', {
 	platform: text('platform').notNull(),
 	encryptedToken: text('encrypted_token').notNull(),
 	label: text('label'),
-	lastUsedAt: text('last_user_at'),
+	lastUsedAt: text('last_used_at'),
 	createdAt: text('created_at')
 		.$defaultFn(() => new Date().toISOString())
 		.notNull(),
@@ -78,9 +77,6 @@ export const scanResults = sqliteTable('scan_results', {
 	createdAt: text('created_at')
 		.$defaultFn(() => new Date().toISOString())
 		.notNull(),
-	createdAt: text('created_at')
-		.$defaultFn(() => new Date().toISOString())
-		.notNull(),
 	updatedAt: text('updated_at')
 		.$defaultFn(() => new Date().toISOString())
 		.$onUpdateFn(() => new Date().toISOString())
@@ -125,3 +121,9 @@ export type PatToken = typeof patTokens.$inferSelect;
 export type ScanJob = typeof scanJobs.$inferSelect;
 export type ScanResult = typeof scanResults.$inferSelect;
 export type MigrationJob = typeof migrationJobs.$inferSelect;
+
+export type InsertUser = typeof users.$inferInsert;
+export type InsertPatToken = typeof patTokens.$inferInsert;
+export type InsertScanJob = typeof scanJobs.$inferInsert;
+export type InsertScanResult = typeof scanResults.$inferInsert;
+export type InsertMigrationJob = typeof migrationJobs.$inferInsert;
