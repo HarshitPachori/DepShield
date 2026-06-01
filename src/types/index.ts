@@ -149,3 +149,23 @@ export interface MigrateRequest {
 	platform: Platform;
 	token: string;
 }
+
+export interface NpmPackageInfo {
+	name: string;
+	version: string;
+	isDeprecated: boolean;
+	deprecationMessage?: string;
+	lastPublishedAt: string;
+	lastPublishedDaysAgo: number;
+	weeklyDownloads: number;
+	maintainerCount: number;
+	license?: string;
+	homepage?: string;
+	repository?: string;
+}
+
+export interface NpmDownloadStats {
+	weeklyDownloads: number;
+	monthlyDownloads: number;
+	trendPercent: number; // positive = growing, negative = declining
+}

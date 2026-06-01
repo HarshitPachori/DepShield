@@ -1,6 +1,6 @@
 import type { Ecosystem, EcosystemDetection, PackageManager } from '@/types';
 import { parseByEcosystem, parseGithubUrl, parseGitlabUrl } from '@backend/helper';
-import { COMMON_SUBDIRS, DEPENDENCY_FILES, ECOSYSTEM_FILES, PACKAGE_MANAGER_FILES } from '@backend/constant';
+import { COMMON_SUBDIRS, DEPENDENCY_FILES, ECOSYSTEM_FILES, PACKAGE_MANAGER_FILES } from '@/backend/constants';
 
 const fetchGithubFileList = async (repoUrl: string, path: string = '', token?: string): Promise<string[]> => {
 	const { owner, repo } = parseGithubUrl(repoUrl);
@@ -64,8 +64,6 @@ const matchEcosystem = (files: string[]): Omit<EcosystemDetection, 'basePath' | 
 	return { ecosystem, packageManager, dependencyFile, lockFile, supported };
 };
 
-// ─── Main Service ─────────────────────────────────────────────────────────────
-
 export const detectEcosystem = async (repoUrl: string, platform: 'github' | 'gitlab', token?: string): Promise<EcosystemDetection> => {
 	const rootFiles = platform === 'github' ? await fetchGithubFileList(repoUrl, '', token) : await fetchGitlabFileList(repoUrl, '', token);
 
@@ -114,7 +112,6 @@ export const detectEcosystem = async (repoUrl: string, platform: 'github' | 'git
 	};
 };
 
-// ─── Parse Dependencies ───────────────────────────────────────────────────────
 export const parseDependencies = async (
 	repoUrl: string,
 	platform: 'github' | 'gitlab',
@@ -126,7 +123,6 @@ export const parseDependencies = async (
 
 	const filePath = basePath ? `${basePath}/${dependencyFile}` : dependencyFile;
 
-	// Fetch the dependency file content
 	let content: string;
 
 	if (platform === 'github') {
@@ -151,6 +147,5 @@ export const parseDependencies = async (
 		content = await res.text();
 	}
 
-	// Parse based on ecosystem
 	return parseByEcosystem(ecosystem, content);
 };

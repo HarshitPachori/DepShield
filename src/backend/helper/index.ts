@@ -50,3 +50,5 @@ export const parseRequirementsTxt = (content: string): Record<string, string> =>
 
 	return deps;
 };
+
+export const formatDate = (date: Date): string => date.toISOString().split('T')[0];
