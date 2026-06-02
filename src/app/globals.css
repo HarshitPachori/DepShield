@@ -57,7 +57,7 @@
 }
 
 :root {
-	/* Light mode — keep shadcn defaults */
+	/* Light mode - keep shadcn defaults */
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.145 0 0);
 	--card: oklch(1 0 0);
@@ -91,7 +91,7 @@
 	--sidebar-border: oklch(0.922 0 0);
 	--sidebar-ring: oklch(0.708 0 0);
 
-	/* DepShield risk colors — same in light/dark */
+	/* DepShield risk colors - same in light/dark */
 	--risk-critical: #ff4757;
 	--risk-high: #ff8c42;
 	--risk-medium: #ffd93d;
@@ -101,7 +101,7 @@
 }
 
 .dark {
-	/* DepShield dark theme — override shadcn defaults */
+	/* DepShield dark theme - override shadcn defaults */
 	--background: #080b11;
 	--foreground: #e8edf5;
 	--card: #0e1420;

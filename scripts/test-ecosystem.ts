@@ -35,7 +35,7 @@ for (const pkg of results) {
 						? '🔵'
 						: '🟢';
 
-	console.log(`\n${emoji} ${pkg.name} — ${pkg.riskScore}/100 ${pkg.riskLevel}`);
+	console.log(`\n${emoji} ${pkg.name} - ${pkg.riskScore}/100 ${pkg.riskLevel}`);
 	console.log(`   Strategy: ${pkg.fixStrategy}`);
 	console.log(`   CVEs: ${pkg.cves.length}`);
 	console.log(`   ${pkg.explanation}`);

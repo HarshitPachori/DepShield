@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-	title: 'DepShield — AI-Powered Dependency Intelligence',
+	title: 'DepShield : AI-Powered Dependency Intelligence',
 	description: 'Detect vulnerabilities and silent abandonment risks in your dependencies. Auto-migrate with tested PRs.',
 };
 
