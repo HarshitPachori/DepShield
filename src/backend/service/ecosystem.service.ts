@@ -133,7 +133,12 @@ export const parseDependencies = async (
 		};
 		if (token) headers['Authorization'] = `Bearer ${token}`;
 
-		const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/${filePath}`, { headers });
+		let res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/${filePath}`, { headers });
+
+		if (!res.ok) {
+			res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/master/${filePath}`, { headers });
+		}
+
 		if (!res.ok) throw new Error(`Failed to fetch ${filePath}`);
 		content = await res.text();
 	} else {
@@ -143,7 +148,12 @@ export const parseDependencies = async (
 		const headers: Record<string, string> = {};
 		if (token) headers['PRIVATE-TOKEN'] = token;
 
-		const res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=main`, { headers });
+		let res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=main`, { headers });
+
+		if (!res.ok) {
+			res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=master`, { headers });
+		}
+
 		if (!res.ok) throw new Error(`Failed to fetch ${filePath}`);
 		content = await res.text();
 	}

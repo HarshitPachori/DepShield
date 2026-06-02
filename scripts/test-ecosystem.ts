@@ -3,8 +3,9 @@ import { scanAllPackages } from '@/backend/service/risk.service';
 
 // const TEST_REPO = 'https://github.com/HarshitPachori/ride_fast';
 // const TEST_REPO = 'https://github.com/HarshitPachori/TodoList_SpringBoot';
-const TEST_REPO = 'https://github.com/SuhasKamate/Business_Management_Project';
+const TEST_REPO = 'https://github.com/appuio/example-spring-boot-helloworld';
 // const TEST_REPO = 'https://github.com/otahina/PowerPoint-Generator-Python-Project';
+
 const PLATFORM = 'github';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 

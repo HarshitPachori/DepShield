@@ -58,12 +58,9 @@ export const parseRequirementsTxt = (content: string): Record<string, string> =>
 export const parseBuildGradle = (content: string): Record<string, string> => {
 	const deps: Record<string, string> = {};
 
-	// Gradle patterns:
-	// implementation 'org.springframework.boot:spring-boot-starter:3.0.0'
-	// implementation "com.google.guava:guava:31.0-jre"
-	// implementation group: 'org.apache.commons', name: 'commons-lang3', version: '3.12.0'
-
-	const shortRegex = /(?:implementation|api|compile|runtimeOnly|testImplementation)['"]\s*['"]([^'"]+)['"]['"]/g;
+	// Short notation - implementation 'group:name:version'
+	// implementation "group:name:version"
+	const shortRegex = /(?:implementation|api|compile|runtimeOnly|testImplementation|testCompile)\s+['"]([^'"]+)['"]/g;
 	let match;
 
 	while ((match = shortRegex.exec(content)) !== null) {
@@ -75,11 +72,24 @@ export const parseBuildGradle = (content: string): Record<string, string> => {
 		}
 	}
 
+	// Long notation - implementation group: 'x', name: 'y', version: 'z'
 	const longRegex =
-		/(?:implementation|api|compile)\s+group:\s*['"]([^'"]+)['"]\s*,\s*name:\s*['"]([^'"]+)['"]\s*,\s*version:\s*['"]([^'"]+)['"]/g;
+		/(?:implementation|api|compile|testImplementation)\s+group:\s*['"]([^'"]+)['"]\s*,\s*name:\s*['"]([^'"]+)['"]\s*,\s*version:\s*['"]([^'"]+)['"]/g;
 
 	while ((match = longRegex.exec(content)) !== null) {
 		deps[`${match[1]}:${match[2]}`] = match[3];
+	}
+
+	// Kotlin DSL - implementation("group:name:version")
+	const kotlinRegex = /(?:implementation|api|compile|runtimeOnly|testImplementation)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+	while ((match = kotlinRegex.exec(content)) !== null) {
+		const parts = match[1].split(':');
+		if (parts.length >= 2) {
+			const name = `${parts[0]}:${parts[1]}`;
+			const version = parts[2] ?? 'unknown';
+			deps[name] = version;
+		}
 	}
 
 	return deps;
