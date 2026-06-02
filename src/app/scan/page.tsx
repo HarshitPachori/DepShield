@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import type { ApiResponse, StatusResponse } from '@/types';
 
 const POLL_INTERVAL = 2000;
 
-export default function ScanPage() {
+function ScanPageComponent() {
 	const searchParams = useSearchParams();
 	const router = useRouter();
 	const jobId = searchParams.get('jobId');
@@ -197,5 +197,13 @@ export default function ScanPage() {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+export default function ScanPage() {
+	return (
+		<Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+			<ScanPageComponent />
+		</Suspense>
 	);
 }
