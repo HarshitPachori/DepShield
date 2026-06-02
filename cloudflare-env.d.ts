@@ -10,7 +10,39 @@ interface __BaseEnv_CloudflareEnv {
 declare namespace Cloudflare {
 	interface Env extends __BaseEnv_CloudflareEnv {}
 }
-interface CloudflareEnv extends __BaseEnv_CloudflareEnv {}
+interface CloudflareEnv extends __BaseEnv_CloudflareEnv {
+  DB: D1Database;
+  KV: KVNamespace;
+  ASSETS: Fetcher;
+  SCAN_QUEUE: Queue;
+  MIGRATION_QUEUE: Queue;
+
+  // AUTH
+  NEXTAUTH_SECRET: string
+  NEXTAUTH_URL: string
+  GOOGLE_CLIENT_ID: string
+  GOOGLE_CLIENT_SECRET: string
+
+  // Elastic
+  ELASTIC_URL: string
+  ELASTIC_API_KEY: string
+  ELASTIC_MCP_ENDPOINT: string
+
+  // GitLab
+  GITLAB_TOKEN: string
+  GITLAB_URL: string
+
+  // GitHub
+  GITHUB_TOKEN: string
+
+  // Encryption
+  ENCRYPTION_KEY: string
+
+  // Google Cloud
+  GOOGLE_CLOUD_PROJECT_ID: string
+  GOOGLE_CLOUD_LOCATION: string
+  VERTEX_AI_API_KEY: string
+}
 type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };

@@ -17,8 +17,8 @@
 		"docker:logs": "docker logs depshield-elastic -f",
 		"docker:fresh": "docker-compose -f docker/docker-compose.yml down -v && docker-compose -f docker/docker-compose.yml up -d",
 		"db:generate": "drizzle-kit generate",
-		"db:migrate:local": "wrangler d1 execute depshield --local --file=./drizzle/migrations/0000_init.sql",
-		"db:migrate:remote": "wrangler d1 execute depshield --file=./drizzle/migrations/0000_init.sql",
+		"db:migrate:local": "wrangler d1 migrations apply DB --local",
+		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
 		"db:studio": "wrangler d1 studio depshield",
 		"seed:elastic": "bun run scripts/seed-elastic.ts",
 		"prepare": "husky"
