@@ -127,11 +127,23 @@ export interface ScanResponse {
 
 export interface StatusResponse {
 	jobId: string;
-	status: ScanStatus;
+	status: 'pending' | 'scanning' | 'complete' | 'error';
 	progress: number;
 	total: number;
-	ecosystem: Ecosystem | null;
-	packageManager: PackageManager | null;
+	repoUrl: string;
+	platform: 'github' | 'gitlab';
+	ecosystem?: string;
+	packageManager?: string;
+	basePath?: string;
+	allDetected?: Array<{ ecosystem: string; supported: boolean; basePath: string }>;
+	summary?: {
+		totalPackages: number;
+		criticalCount: number;
+		highCount: number;
+		mediumCount: number;
+		lowCount: number;
+		safeCount: number;
+	};
 	results?: PackageRisk[];
 	error?: string;
 }
@@ -169,4 +181,19 @@ export interface NpmDownloadStats {
 	weeklyDownloads: number;
 	monthlyDownloads: number;
 	trendPercent: number; // positive = growing, negative = declining
+}
+
+export interface ApiResponse<T = unknown> {
+	success: boolean;
+	message: string;
+	data?: T;
+	timestamp: string;
+}
+
+export interface ApiError {
+	success: false;
+	message: string;
+	statusCode: number;
+	details?: unknown;
+	timestamp: string;
 }

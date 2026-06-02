@@ -3,20 +3,26 @@ import Link from 'next/link';
 
 export default function DocumentListPage() {
 	return (
-		<div className="flex items-center justify-center gap-4 p-4">
-			<div className="w-full max-w-sm sm:max-w-xl md:max-w-3xl lg:max-w-4xl">
-				<div className="">
-					<h1 className="text-2xl font-bold">Documentation</h1>
-					<p className="text-slate-400 text-sm mt-1">Explore our documentation to learn more about our features and how to use them.</p>
+		<div className="min-h-screen px-6 py-12">
+			<div className="mx-auto max-w-4xl">
+				{/* Header */}
+				<div className="mb-8">
+					<h1 className="text-3xl font-bold text-foreground tracking-tight">Documentation</h1>
+					<p className="text-muted-foreground text-sm mt-2">
+						Explore our documentation to learn more about DepShield's features and architecture.
+					</p>
 				</div>
-				<div className="flex flex-wrap gap-4 mt-5">
+
+				{/* Doc cards */}
+				<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
 					{docList.map((doc) => (
 						<Link
 							href={`/docs/${doc.slug}`}
 							key={doc.id}
-							className="bg-slate-300 text-slate-700 rounded-lg px-4 py-2 hover:bg-slate-400 hover:text-slate-900 transition-colors font-semibold cursor-pointer"
+							className="group bg-card border border-border hover:border-primary/50 rounded-xl px-5 py-4 transition-all hover:bg-card/80"
 						>
-							{doc.name}
+							<p className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">{doc.name}</p>
+							<p className="text-xs text-muted-foreground mt-1">View document →</p>
 						</Link>
 					))}
 				</div>

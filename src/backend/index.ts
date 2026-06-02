@@ -6,7 +6,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { globalErrorHandler } from '@backend/middleware/globalErrorHandler';
 import mainRouter from '@backend/routes';
 
-const app = new Hono<{ Bindings: CloudflareEnv }>().basePath('/api');
+const app = new Hono().basePath('/api');
 
 app.use('*', logger());
 app.use('*', secureHeaders());

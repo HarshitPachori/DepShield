@@ -132,7 +132,7 @@ bunx wrangler d1 create depshield
 # database_name = "depshield"
 # database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
-# Copy the database_id — add to wrangler.jsonc and .env.local
+# Copy the database_id - add to wrangler.jsonc and .env.local
 ${B}${B}${B}
 
 ### 4.3 Create KV Namespace
@@ -144,7 +144,7 @@ bunx wrangler kv namespace create depshield-cache
 # ✅ Successfully created KV namespace
 # id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-# Copy the id — add to wrangler.jsonc
+# Copy the id - add to wrangler.jsonc
 ${B}${B}${B}
 
 ### 4.4 Create Queues
@@ -159,7 +159,7 @@ ${B}${B}${B}
 
 ### 4.5 wrangler.jsonc (Complete Config)
 
-${B}${B}${B}jsonc
+${B}${B}${B}json
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "depshield",
@@ -222,7 +222,7 @@ ${B}${B}${B}
 ### 4.6 Set Wrangler Secrets
 
 ${B}${B}${B}bash
-# These are encrypted secrets — never in code or .env committed to git
+# These are encrypted secrets - never in code or .env committed to git
 
 bunx wrangler secret put ENCRYPTION_KEY
 # Paste your 32-char random string
@@ -370,7 +370,7 @@ D1_DATABASE_ID=
 KV_NAMESPACE_ID=
 ${B}${B}${B}
 
-### 6.2 .env.local (never commit — in .gitignore)
+### 6.2 .env.local (never commit - in .gitignore)
 
 Copy ${B}.env.example${B} to ${B}.env.local${B} and fill all values.
 

@@ -9,15 +9,21 @@ export const metadata: Metadata = {
 
 export default function DocumentLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="bg-background py-5">
+		<div className="min-h-screen px-6 py-8">
 			<div className="mx-auto max-w-3xl">
-				<div className=" mb-4 flex items-center gap-2 text-sm text-muted-foreground">
-					<ArrowLeft size={16} />
-					<Link href="/docs" className="text-slate-300 hover:text-slate-300/80">
-						Back to docs
-					</Link>
-				</div>
-				<div className="border bg-card rounded-2xl border-slate-700 p-8 shadow-sm md:p-12 mt-4">{children}</div>
+				{/* Back link */}
+				<Link
+					href="/docs"
+					className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
+				>
+					<ArrowLeft size={14} />
+					Back to docs
+				</Link>
+
+				{/* Content card */}
+				<div className="bg-card border border-border rounded-2xl p-8 md:p-12">{children}</div>
+
+				{/* Footer */}
 				<p className="text-muted-foreground mt-6 text-center text-xs">© {new Date().getFullYear()} DepShield. All rights reserved.</p>
 			</div>
 		</div>
