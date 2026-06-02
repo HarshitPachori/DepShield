@@ -30,6 +30,7 @@
 		]
 	},
 	"dependencies": {
+		"@hono/zod-validator": "^0.8.0",
 		"@opennextjs/cloudflare": "^1.19.9",
 		"drizzle-orm": "^0.45.2",
 		"hono": "^4.12.22",

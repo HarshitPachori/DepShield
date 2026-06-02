@@ -113,6 +113,12 @@ export const detectEcosystem = async (repoUrl: string, platform: 'github' | 'git
 	};
 };
 
+export const detectPlatform = (repoUrl: string): 'github' | 'gitlab' | null => {
+	if (repoUrl.includes('github.com')) return 'github';
+	if (repoUrl.includes('gitlab.com')) return 'gitlab';
+	return null;
+};
+
 export const parseDependencies = async (
 	repoUrl: string,
 	platform: 'github' | 'gitlab',
