@@ -159,7 +159,7 @@ ${B}${B}${B}
 
 ### 4.5 wrangler.jsonc (Complete Config)
 
-${B}${B}${B}jsonc
+${B}${B}${B}json
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "depshield",

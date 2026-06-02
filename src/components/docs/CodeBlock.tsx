@@ -65,11 +65,11 @@ export function CodeBlock({ children, language = 'text' }: CodeBlockProps) {
 	const isPlaintext = language === 'text' || language === 'plaintext';
 
 	return (
-		<div className="border border-slate-700 bg-[#0d1117] relative my-4 overflow-hidden rounded-lg">
+		<div className="border border-border bg-[#0d1117] relative my-4 overflow-hidden rounded-lg">
 			{/* GitHub Header Styling */}
-			<div className="border border-slate-700/80 bg-[#161b22] flex items-center justify-between border-b px-4 py-2 text-xs text-[#8b949e] font-mono">
+			<div className="border border-border/80 bg-muted flex items-center justify-between border-b px-4 py-2 text-xs text-muted-foreground font-mono">
 				<span className="font-medium">{language}</span>
-				<button onClick={handleCopy} className="hover:text-[#c9d1d9] rounded px-2 py-0.5 transition-colors focus:outline-none">
+				<button onClick={handleCopy} className="hover:text-foreground rounded px-2 py-0.5 transition-colors focus:outline-none">
 					{copied ? 'Copied!' : 'Copy'}
 				</button>
 			</div>
@@ -78,7 +78,7 @@ export function CodeBlock({ children, language = 'text' }: CodeBlockProps) {
 			<div className="p-4 overflow-x-auto text-xs font-mono leading-relaxed">
 				{isPlaintext ? (
 					// Exact text formatting matches GitHub's custom layout font colors
-					<pre className="text-slate-300 whitespace-pre font-mono selection:bg-[#264f78]">{children}</pre>
+					<pre className="text-muted-foreground whitespace-pre font-mono selection:bg-primary/20">{children}</pre>
 				) : (
 					<SyntaxHighlighter language={language} style={githubDarkTheme} customStyle={{ margin: 0, padding: 0, background: 'transparent' }}>
 						{children}
