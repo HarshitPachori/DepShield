@@ -1,6 +1,6 @@
 import type { Ecosystem, EcosystemDetection, PackageManager } from '@/types';
 import { parseByEcosystem, parseGithubUrl, parseGitlabUrl } from '@backend/helper';
-import { COMMON_SUBDIRS, DEPENDENCY_FILES, ECOSYSTEM_FILES, PACKAGE_MANAGER_FILES } from '@/backend/constants';
+import { COMMON_SUBDIRS, ECOSYSTEM_FILES, PACKAGE_MANAGER_FILES } from '@/backend/constants';
 
 const fetchGithubFileList = async (repoUrl: string, path: string = '', token?: string): Promise<string[]> => {
 	const { owner, repo } = parseGithubUrl(repoUrl);
@@ -37,12 +37,14 @@ const fetchGitlabFileList = async (repoUrl: string, path: string = '', token?: s
 const matchEcosystem = (files: string[]): Omit<EcosystemDetection, 'basePath' | 'allDetected'> => {
 	let ecosystem: Ecosystem | null = null;
 	let supported = false;
+	let dependencyFile: string | null = null;
 
 	for (const entry of ECOSYSTEM_FILES) {
-		const matched = entry.files.some((f) => files.includes(f));
-		if (matched) {
+		const matchedFile = entry.files.find((f) => files.includes(f));
+		if (matchedFile) {
 			ecosystem = entry.ecosystem;
 			supported = entry.supported;
+			dependencyFile = matchedFile;
 			break;
 		}
 	}
@@ -58,7 +60,6 @@ const matchEcosystem = (files: string[]): Omit<EcosystemDetection, 'basePath' | 
 		if (!packageManager) packageManager = 'npm';
 	}
 
-	const dependencyFile = ecosystem ? DEPENDENCY_FILES[ecosystem] : null;
 	const lockFile = PACKAGE_MANAGER_FILES.find((p) => files.includes(p.file))?.file ?? null;
 
 	return { ecosystem, packageManager, dependencyFile, lockFile, supported };
@@ -147,5 +148,5 @@ export const parseDependencies = async (
 		content = await res.text();
 	}
 
-	return parseByEcosystem(ecosystem, content);
+	return parseByEcosystem(ecosystem, content, dependencyFile);
 };
