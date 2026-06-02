@@ -4,7 +4,8 @@ import { getDbInstance } from '@/backend/db';
 import { scanJobs, scanResults } from '@/backend/db/schema';
 import { eq } from 'drizzle-orm';
 import type { Ecosystem } from '@/types';
-import logger from '../util/logger';
+import logger from '@backend/util/logger';
+import { indexScanResults } from '@backend/service/elastic.service';
 
 export interface ScanMessage {
 	jobId: string;
@@ -81,6 +82,8 @@ export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): 
 		await db.update(scanJobs).set({ status: 'complete', completedAt: new Date().toISOString() }).where(eq(scanJobs.id, jobId));
 		logger.info('Scan job complete', { jobId, totalPackages: results.length });
 		await updateKV({ status: 'complete', progress: total, total, summary, results });
+		await indexScanResults(results);
+		logger.info('Results indexed to Elastic', { jobId, count: results.length });
 	} catch (err) {
 		const error = err instanceof Error ? err.message : 'Unknown error';
 		await updateKV({ status: 'error', error });
