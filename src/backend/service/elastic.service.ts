@@ -4,6 +4,16 @@ import type { PackageRisk } from '@/types';
 export const SIGNALS_INDEX = 'depshield-signals';
 export const CACHE_INDEX = 'depshield-cache';
 
+const indexExists = async (indexName: string): Promise<boolean> => {
+	const base = process.env.ELASTIC_URL ?? 'http://localhost:9200';
+	const apiKey = process.env.ELASTIC_API_KEY;
+	const headers: Record<string, string> = {};
+	if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
+
+	const res = await fetch(`${base}/${indexName}`, { method: 'GET', headers });
+	return res.status === 200;
+};
+
 const elasticFetch = async (path: string, body?: unknown, method?: string): Promise<any> => {
 	const base = process.env.ELASTIC_URL ?? 'http://localhost:9200';
 	const apiKey = process.env.ELASTIC_API_KEY;
@@ -44,7 +54,7 @@ const elasticBulk = async (lines: string[]): Promise<void> => {
 };
 
 export const createIndices = async (): Promise<void> => {
-	const signalsCheck = await elasticFetch(`/${SIGNALS_INDEX}`, undefined, 'HEAD').catch(() => null);
+	const signalsCheck = await indexExists(SIGNALS_INDEX);
 	if (!signalsCheck) {
 		await elasticFetch(
 			`/${SIGNALS_INDEX}`,
@@ -69,7 +79,7 @@ export const createIndices = async (): Promise<void> => {
 		logger.info(`Index ${SIGNALS_INDEX} created`);
 	}
 
-	const cacheCheck = await elasticFetch(`/${CACHE_INDEX}`, undefined, 'HEAD').catch(() => null);
+	const cacheCheck = await indexExists(CACHE_INDEX);
 	if (!cacheCheck) {
 		await elasticFetch(
 			`/${CACHE_INDEX}`,
