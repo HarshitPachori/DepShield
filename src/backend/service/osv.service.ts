@@ -49,6 +49,7 @@ export const fetchCVEs = async (packageName: string, ecosystem: Ecosystem, versi
 		if (!res.ok) return [];
 
 		const data = (await res.json()) as { vulns?: OsvVulnerability[] };
+
 		if (!data.vulns?.length) return [];
 
 		return data.vulns.map((vuln) => parseCVE(vuln));
