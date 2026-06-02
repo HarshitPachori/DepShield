@@ -4,9 +4,26 @@ import { z } from 'zod';
 import { getDbInstance } from '@/backend/db';
 import { scanJobs } from '@/backend/db/schema';
 import { detectPlatform } from '@/backend/service/ecosystem.service';
+import logger from '@backend/util/logger';
+import { errorResponse, successResponse } from '@backend/util/response';
+import { parseGithubUrl, parseGitlabUrl } from '@backend/helper';
+
+const validateRepo = async (repoUrl: string, platform: string, token?: string) => {
+	if (platform === 'github') {
+		const { owner, repo } = parseGithubUrl(repoUrl);
+		const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: { 'User-Agent': 'DepShield/1.0' } });
+		return res.ok;
+	}
+	if (platform === 'gitlab') {
+		const { fullPath } = parseGitlabUrl(repoUrl);
+		const res = await fetch(`https://gitlab.com/api/v4/projects/${encodeURIComponent(fullPath)}`);
+		return res.ok;
+	}
+	return false;
+};
 
 const scanSchema = z.object({
-	repoUrl: z.string().url(),
+	repoUrl: z.url(),
 	token: z.string().optional(),
 });
 
@@ -17,9 +34,14 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 
 	const platform = detectPlatform(repoUrl);
 	if (!platform) {
-		return c.json({ error: 'Unsupported platform. Only GitHub and GitLab are supported.' }, 400);
+		logger.error('Unsupported platform. Only GitHub and GitLab are supported.', undefined, { repoUrl });
+		return c.json(errorResponse('Unsupported platform. Only GitHub and GitLab are supported.', 400), 400);
 	}
 
+	const exists = await validateRepo(repoUrl, platform, token);
+	if (!exists) {
+		return c.json(errorResponse('Repository not found. Check the URL and try again.', 404), 404);
+	}
 	const jobId = crypto.randomUUID();
 	const db = getDbInstance(c.env.DB);
 
@@ -38,5 +60,5 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 
 	await c.env.SCAN_QUEUE.send({ jobId, repoUrl, platform, token });
 
-	return c.json({ jobId, status: 'pending', repoUrl, platform }, 201);
+	return c.json(successResponse({ jobId, status: 'pending', repoUrl, platform }, 'Scan job created'), 201);
 });
