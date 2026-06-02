@@ -37,6 +37,7 @@ export interface RiskSignals {
 	maintainerActive: boolean;
 	weeklyDownloads: number;
 	communitySignal?: string;
+	riskScore?: number;
 }
 
 export interface PackageRisk {
