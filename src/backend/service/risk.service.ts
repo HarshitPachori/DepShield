@@ -1,6 +1,7 @@
-import type { CVE, FixStrategy, PackageRisk, RiskLevel, RiskSignals } from '@/types';
-import { fetchGithubCommitActivity, fetchNpmDownloadStats, fetchNpmPackageInfo } from './npm.service';
-import { fetchCVEs } from './osv.service';
+import type { CVE, Ecosystem, FixStrategy, PackageRisk, RiskLevel, RiskSignals } from '@/types';
+import { fetchGithubCommitActivity, fetchNpmDownloadStats, fetchNpmPackageInfo } from '@backend/service/npm.service';
+import { fetchPyPICommitActivity, fetchPyPIDownloadStats, fetchPyPIPackageInfo } from '@backend/service/pypi.service';
+import { fetchCVEs } from '@backend/service/osv.service';
 
 export const calculateRiskScore = (signals: RiskSignals): number => {
 	let score = 0;
@@ -61,22 +62,43 @@ export const generateExplanation = (name: string, signals: RiskSignals, riskLeve
 	return `${name} is ${riskLevel.toLowerCase()} risk: ${parts.join(', ')}.`;
 };
 
-export const scanPackage = async (name: string, declaredVersion: string, githubToken?: string): Promise<PackageRisk> => {
-	const [npmInfo, downloadStats, commitActivity, cves] = await Promise.all([
-		fetchNpmPackageInfo(name),
-		fetchNpmDownloadStats(name),
-		fetchGithubCommitActivity(name, githubToken),
-		fetchCVEs(name, 'nodejs', declaredVersion.replace(/^[\^~>=<]/, '')),
+export const scanPackage = async (
+	name: string,
+	declaredVersion: string,
+	ecosystem: Ecosystem = 'nodejs',
+	githubToken?: string,
+): Promise<PackageRisk> => {
+	const isNodejs = ecosystem === 'nodejs';
+	const isPython = ecosystem === 'python';
+	const isJava = ecosystem === 'java';
+	const isGo = ecosystem === 'go';
+
+	const [pkgInfo, downloadStats, commitActivity, cves] = await Promise.all([
+		isNodejs ? fetchNpmPackageInfo(name) : isPython ? fetchPyPIPackageInfo(name) : Promise.resolve(null),
+
+		isNodejs
+			? fetchNpmDownloadStats(name)
+			: isPython
+				? fetchPyPIDownloadStats(name)
+				: Promise.resolve({ weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 }),
+
+		isNodejs
+			? fetchGithubCommitActivity(name, githubToken)
+			: isPython
+				? fetchPyPICommitActivity(name, githubToken)
+				: Promise.resolve({ lastCommitDaysAgo: 0, maintainerActive: true }),
+
+		fetchCVEs(name, ecosystem, declaredVersion.replace(/^[\^~>=<]/, '')),
 	]);
 
 	const signals: RiskSignals = {
-		isDeprecated: npmInfo?.isDeprecated ?? false,
-		lastCommitDaysAgo: commitActivity.lastCommitDaysAgo,
-		downloadTrendPercent: downloadStats.trendPercent,
+		isDeprecated: pkgInfo?.isDeprecated ?? false,
+		lastCommitDaysAgo: commitActivity?.lastCommitDaysAgo ?? 0,
+		downloadTrendPercent: downloadStats?.trendPercent ?? 0,
 		openCveCount: cves.length,
-		maintainerActive: commitActivity.maintainerActive,
-		weeklyDownloads: downloadStats.weeklyDownloads,
-		communitySignal: npmInfo?.deprecationMessage,
+		maintainerActive: commitActivity?.maintainerActive ?? true,
+		weeklyDownloads: downloadStats?.weeklyDownloads ?? 0,
+		communitySignal: pkgInfo?.deprecationMessage,
 	};
 
 	const riskScore = calculateRiskScore(signals);
@@ -86,7 +108,7 @@ export const scanPackage = async (name: string, declaredVersion: string, githubT
 	return {
 		name,
 		declaredVersion,
-		ecosystem: 'nodejs',
+		ecosystem,
 		riskScore,
 		riskLevel,
 		fixStrategy,
@@ -98,6 +120,7 @@ export const scanPackage = async (name: string, declaredVersion: string, githubT
 
 export const scanAllPackages = async (
 	deps: Record<string, string>,
+	ecosystem: Ecosystem = 'nodejs',
 	githubToken?: string,
 	onProgress?: (scanned: number, total: number) => void,
 ): Promise<PackageRisk[]> => {
@@ -111,7 +134,9 @@ export const scanAllPackages = async (
 	for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
 		const batch = filtered.slice(i, i + BATCH_SIZE);
 
-		const batchResults = await Promise.all(batch.map(([name, version]) => scanPackage(name, version, githubToken).catch(() => null)));
+		const batchResults = await Promise.all(
+			batch.map(([name, version]) => scanPackage(name, version, ecosystem, githubToken).catch(() => null)),
+		);
 
 		for (const result of batchResults) {
 			if (result) results.push(result);
