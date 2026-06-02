@@ -2,6 +2,8 @@ import type { CVE, Ecosystem, FixStrategy, PackageRisk, RiskLevel, RiskSignals }
 import { fetchGithubCommitActivity, fetchNpmDownloadStats, fetchNpmPackageInfo } from '@backend/service/npm.service';
 import { fetchPyPICommitActivity, fetchPyPIDownloadStats, fetchPyPIPackageInfo } from '@backend/service/pypi.service';
 import { fetchCVEs } from '@backend/service/osv.service';
+import logger from '@backend/util/logger';
+import { getCachedPackage } from '@backend/service/elastic.service';
 
 export const calculateRiskScore = (signals: RiskSignals): number => {
 	let score = 0;
@@ -68,6 +70,12 @@ export const scanPackage = async (
 	ecosystem: Ecosystem = 'nodejs',
 	githubToken?: string,
 ): Promise<PackageRisk> => {
+	const cached = await getCachedPackage(name, ecosystem).catch(() => null);
+	if (cached) {
+		logger.info('Cache hit', { package: name, ecosystem });
+		return cached;
+	}
+
 	const isNodejs = ecosystem === 'nodejs';
 	const isPython = ecosystem === 'python';
 	const isJava = ecosystem === 'java';

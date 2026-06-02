@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { errorResponse, successResponse } from '../util/response';
+import { errorResponse, successResponse } from '@backend/util/response';
 
 export const statusRouter = new Hono<{ Bindings: CloudflareEnv }>();
 
