@@ -17,7 +17,7 @@ export const calculateRiskScore = (signals: RiskSignals): number => {
 	else if (signals.downloadTrendPercent < -10) score += 6;
 	if (!signals.maintainerActive) score += 10;
 
-	// CVE count based — severity data unreliable
+	// CVE count based - severity data unreliable
 	if (signals.openCveCount >= 20) score += 35;
 	else if (signals.openCveCount >= 10) score += 28;
 	else if (signals.openCveCount >= 5) score += 20;

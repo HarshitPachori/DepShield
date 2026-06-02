@@ -4,6 +4,7 @@ import { getDbInstance } from '@/backend/db';
 import { scanJobs, scanResults } from '@/backend/db/schema';
 import { eq } from 'drizzle-orm';
 import type { Ecosystem } from '@/types';
+import logger from '../util/logger';
 
 export interface ScanMessage {
 	jobId: string;
@@ -21,6 +22,7 @@ export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): 
 	};
 
 	try {
+		logger.info('Scan job started', { jobId, repoUrl, platform });
 		await updateKV({ status: 'scanning', progress: 0, total: 0 });
 		await db.update(scanJobs).set({ status: 'scanning' }).where(eq(scanJobs.id, jobId));
 
@@ -77,7 +79,7 @@ export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): 
 		});
 
 		await db.update(scanJobs).set({ status: 'complete', completedAt: new Date().toISOString() }).where(eq(scanJobs.id, jobId));
-
+		logger.info('Scan job complete', { jobId, totalPackages: results.length });
 		await updateKV({ status: 'complete', progress: total, total, summary, results });
 	} catch (err) {
 		const error = err instanceof Error ? err.message : 'Unknown error';
