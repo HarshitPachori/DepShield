@@ -53,6 +53,7 @@ export interface PackageRisk {
 	recommendation?: string;
 	alternative?: string;
 	alternativeCompatibility?: number;
+	alternativeReason?: string;
 	cves: CVE[];
 }
 

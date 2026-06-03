@@ -140,7 +140,14 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		logger.info('Processing chunk', { jobId, chunkIndex, totalChunks });
 
 		// Scan this chunk
-		const chunkResults = await scanAllPackages(packages!, (ecosystem as Ecosystem) ?? 'nodejs', token ?? env.GITHUB_TOKEN);
+		const chunkResults = await scanAllPackages(
+			packages!,
+			(ecosystem as Ecosystem) ?? 'nodejs',
+			token ?? env.GITHUB_TOKEN,
+			undefined,
+			env.GEMINI_API_KEY,
+			env.GROQ_API_KEY,
+		);
 
 		// Fetch existing results from D1
 		const existing = await db.query.scanResults.findFirst({
