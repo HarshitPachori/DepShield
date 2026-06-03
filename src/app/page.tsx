@@ -1,19 +1,34 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Shield, Zap, GitPullRequest } from 'lucide-react';
+import { Shield, Zap, GitPullRequest, Clock, CheckCircle, AlertCircle } from 'lucide-react';
 import { GithubIcon, GitlabIcon } from '@/components/icons';
-import { ApiResponse, ScanResponse } from '@/types';
+import type { ApiResponse, ScanResponse } from '@/types';
+
+interface ScanHistory {
+	jobId: string;
+	repoUrl: string;
+	platform: string;
+	startedAt: number;
+	status: string;
+}
 
 export default function Home() {
 	const router = useRouter();
 	const [repoUrl, setRepoUrl] = useState('');
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState('');
+	const [recentScans, setRecentScans] = useState<ScanHistory[]>([]);
+
+	// Load recent scans from localStorage
+	useEffect(() => {
+		const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
+		setRecentScans(history);
+	}, []);
 
 	const detectPlatform = (url: string) => {
 		if (url.includes('github.com')) return 'github';
@@ -45,13 +60,14 @@ export default function Home() {
 				return;
 			}
 			const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
-			history.unshift({
-				jobId: data.data?.jobId,
+			const newScan: ScanHistory = {
+				jobId: data.data?.jobId!,
 				repoUrl,
 				platform,
 				startedAt: Date.now(),
 				status: 'scanning',
-			});
+			};
+			history.unshift(newScan);
 			localStorage.setItem('depshield_scans', JSON.stringify(history.slice(0, 10)));
 			router.push(`/scan?jobId=${data.data?.jobId}`);
 		} catch {
@@ -62,6 +78,25 @@ export default function Home() {
 	};
 
 	const platform = detectPlatform(repoUrl);
+
+	const formatTime = (ts: number) => {
+		const diff = Date.now() - ts;
+		const mins = Math.floor(diff / 60000);
+		const hours = Math.floor(diff / 3600000);
+		const days = Math.floor(diff / 86400000);
+		if (days > 0) return `${days}d ago`;
+		if (hours > 0) return `${hours}h ago`;
+		if (mins > 0) return `${mins}m ago`;
+		return 'just now';
+	};
+
+	const getRepoName = (url: string) => {
+		try {
+			return new URL(url).pathname.slice(1);
+		} catch {
+			return url;
+		}
+	};
 
 	return (
 		<div className="min-h-screen flex flex-col">
@@ -74,12 +109,11 @@ export default function Home() {
 					Your codebase's <span className="text-primary">last line of defense</span>
 				</h1>
 				<p className="text-muted-foreground text-sm sm:text-lg max-w-xl mb-8 sm:mb-12 leading-relaxed px-2">
-					Detect CVEs and silent abandonment risks across your dependencies. Get AI-powered migration PRs - automatically.
+					Detect CVEs and silent abandonment risks across your dependencies. Get AI-powered migration PRs automatically.
 				</p>
 
 				{/* Scan Input */}
-				<div className="w-full max-w-2xl px-0 sm:px-0">
-					{/* Desktop - single row */}
+				<div className="w-full max-w-2xl">
 					<div className="hidden sm:flex gap-2 p-1.5 bg-card border border-border hover:border-primary/40 rounded-xl transition-colors">
 						<div className="flex items-center pl-3 text-muted-foreground">
 							{platform === 'github' ? (
@@ -105,7 +139,7 @@ export default function Home() {
 						</Button>
 					</div>
 
-					{/* Mobile - stacked */}
+					{/* Mobile */}
 					<div className="flex sm:hidden flex-col gap-2">
 						<div className="flex items-center gap-2 bg-card border border-border rounded-xl px-3 py-2.5">
 							<div className="text-muted-foreground">
@@ -133,10 +167,7 @@ export default function Home() {
 						</Button>
 					</div>
 
-					{/* Error */}
 					{error && <p className="text-destructive text-xs mt-2 text-left pl-1">{error}</p>}
-
-					{/* Platform detected */}
 					{platform && !error && (
 						<p className="text-muted-foreground text-xs mt-2 text-left pl-1">
 							{platform === 'github' ? '🐙 GitHub' : '🦊 GitLab'} repository detected
@@ -157,6 +188,46 @@ export default function Home() {
 						</button>
 					))}
 				</div>
+
+				{/* Recent Scans */}
+				{recentScans.length > 0 && (
+					<div className="w-full max-w-2xl mt-10">
+						<div className="flex items-center gap-2 mb-3">
+							<Clock size={14} className="text-muted-foreground" />
+							<p className="text-xs text-muted-foreground font-medium">Recent scans</p>
+						</div>
+						<div className="space-y-2">
+							{recentScans.slice(0, 5).map((scan) => (
+								<button
+									key={scan.jobId}
+									onClick={() => router.push(`/dashboard?jobId=${scan.jobId}`)}
+									className="w-full flex items-center justify-between bg-card border border-border hover:border-primary/30 rounded-xl px-4 py-3 transition-colors text-left group"
+								>
+									<div className="flex items-center gap-3 min-w-0">
+										{scan.platform === 'github' ? (
+											<GithubIcon size={14} className="text-muted-foreground shrink-0" />
+										) : (
+											<GitlabIcon size={14} className="text-orange-400 shrink-0" />
+										)}
+										<span className="text-sm text-foreground truncate group-hover:text-primary transition-colors">
+											{getRepoName(scan.repoUrl)}
+										</span>
+									</div>
+									<div className="flex items-center gap-2 shrink-0 ml-3">
+										<span className="text-xs text-muted-foreground">{formatTime(scan.startedAt)}</span>
+										{scan.status === 'complete' ? (
+											<CheckCircle size={14} className="text-risk-safe" />
+										) : scan.status === 'error' ? (
+											<AlertCircle size={14} className="text-destructive" />
+										) : (
+											<Clock size={14} className="text-muted-foreground" />
+										)}
+									</div>
+								</button>
+							))}
+						</div>
+					</div>
+				)}
 			</section>
 
 			{/* Features */}
@@ -176,7 +247,7 @@ export default function Home() {
 						{
 							icon: <GitPullRequest size={20} className="text-risk-safe" />,
 							title: 'Auto Migration PRs',
-							desc: 'AI-generated, tested migration pull requests - ready to review and merge.',
+							desc: 'AI-generated, tested migration pull requests ready to review and merge.',
 						},
 					].map((f) => (
 						<div key={f.title} className="bg-card border border-border/60 hover:border-primary/30 rounded-xl p-5 sm:p-6 transition-colors">
