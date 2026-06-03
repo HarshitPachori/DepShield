@@ -1,10 +1,11 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { ApiResponse, StatusResponse, PackageRisk } from '@/types';
+import Link from 'next/link';
 
 const RISK_COLORS: Record<string, string> = {
 	CRITICAL: 'text-[var(--risk-critical)]',
@@ -30,6 +31,9 @@ const RISK_DOT: Record<string, string> = {
 	SAFE: 'bg-[var(--risk-safe)]',
 };
 
+const isTemplateExplanation = (explanation: string) =>
+	/is (critical|high|medium|low|safe) risk:/.test(explanation) || explanation.includes('appears healthy');
+
 function DashboardPageComponent() {
 	const searchParams = useSearchParams();
 	const router = useRouter();
@@ -38,24 +42,61 @@ function DashboardPageComponent() {
 	const [job, setJob] = useState<StatusResponse | null>(null);
 	const [filter, setFilter] = useState<string>('ALL');
 	const [loading, setLoading] = useState(true);
+	const [isEnriching, setIsEnriching] = useState(false);
+
+	const fetchJob = useCallback(async () => {
+		if (!jobId) return;
+		const res = await fetch(`/api/status/${jobId}`);
+		const data: ApiResponse<StatusResponse> = await res.json();
+		if (data.success && data.data) {
+			setJob(data.data);
+			return data.data;
+		}
+		return null;
+	}, [jobId]);
 
 	useEffect(() => {
 		if (!jobId) {
 			router.replace('/');
 			return;
 		}
+		fetchJob().finally(() => setLoading(false));
+	}, [jobId, router, fetchJob]);
 
-		const fetch_ = async () => {
-			try {
-				const res = await fetch(`/api/status/${jobId}`);
-				const data: ApiResponse<StatusResponse> = await res.json();
-				if (data.success && data.data) setJob(data.data);
-			} finally {
-				setLoading(false);
+	useEffect(() => {
+		if (!job || job.status !== 'complete') return;
+		const results = job.results ?? [];
+		const highRisk = results.filter((r) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH' || r.riskLevel === 'MEDIUM');
+		const hasAI = highRisk.some((r) => r.explanation && !isTemplateExplanation(r.explanation));
+		if (highRisk.length > 0 && !hasAI) {
+			setIsEnriching(true);
+		}
+	}, [job]);
+
+	useEffect(() => {
+		if (!job || job.status !== 'complete') return;
+		if (job.aiEnriching && !job.aiEnriched) {
+			setIsEnriching(true);
+		} else if (job.aiEnriched) {
+			setIsEnriching(false);
+		}
+	}, [job?.aiEnriching, job?.aiEnriched]);
+
+	useEffect(() => {
+		if (!isEnriching) return;
+
+		const interval = setInterval(async () => {
+			const updated = await fetchJob();
+			if (!updated) return;
+
+			if (updated.aiEnriched) {
+				setIsEnriching(false);
+				clearInterval(interval);
 			}
-		};
-		fetch_();
-	}, [jobId, router]);
+		}, 5000);
+
+		return () => clearInterval(interval);
+	}, [isEnriching, fetchJob]);
 
 	if (loading) {
 		return (
@@ -96,14 +137,21 @@ function DashboardPageComponent() {
 		<div className="min-h-screen px-4 sm:px-6 py-8">
 			<div className="max-w-5xl mx-auto">
 				{/* Header */}
-				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
 					<div>
 						<h1 className="text-2xl font-bold text-foreground">Scan Results</h1>
-						<p className="text-muted-foreground text-sm mt-1 truncate max-w-md">{job.repoUrl}</p>
+						<Link
+							href={job.repoUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-muted-foreground text-sm mt-1 max-w-md md:max-w-full hover:underline block"
+						>
+							{job.repoUrl}
+						</Link>
 					</div>
 					<div className="flex items-center gap-2">
 						<Badge variant="outline" className="text-xs border-border text-muted-foreground">
-							{job.ecosystem}
+							{job.platform}
 						</Badge>
 						{job.packageManager && (
 							<Badge variant="outline" className="text-xs border-border text-muted-foreground">
@@ -115,6 +163,16 @@ function DashboardPageComponent() {
 						</Button>
 					</div>
 				</div>
+
+				{/* AI Enriching Banner */}
+				{isEnriching && (
+					<div className="flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-4 py-2.5 mb-5">
+						<div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+						<p className="text-xs text-muted-foreground">
+							AI is analyzing high-risk packages. Explanations and alternatives will update automatically.
+						</p>
+					</div>
+				)}
 
 				{/* Summary cards */}
 				<div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
@@ -128,12 +186,12 @@ function DashboardPageComponent() {
 						<button
 							key={s.level}
 							onClick={() => setFilter(filter === s.level ? 'ALL' : s.level)}
-							className={`bg-card border rounded-xl p-4 text-left transition-colors ${
-								filter === s.level ? RISK_BG[s.level] : 'border-border hover:border-border/80'
+							className={`bg-card border rounded-xl p-4 text-left transition-all hover:border-primary/20 ${
+								filter === s.level ? RISK_BG[s.level] : 'border-border'
 							}`}
 						>
-							<p className={`text-2xl font-bold ${RISK_COLORS[s.level]}`}>{s.count}</p>
-							<p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
+							<p className={`text-xl font-bold ${RISK_COLORS[s.level]}`}>{s.count}</p>
+							<p className="text-xs text-muted-foreground mt-1">{s.label}</p>
 						</button>
 					))}
 				</div>
@@ -155,7 +213,7 @@ function DashboardPageComponent() {
 				</div>
 
 				{/* Package list */}
-				<div className="space-y-2">
+				<div className="space-y-3">
 					{filtered.length === 0 ? (
 						<div className="bg-card border border-border rounded-xl p-8 text-center">
 							<p className="text-muted-foreground text-sm">No packages in this category.</p>
@@ -187,44 +245,39 @@ function PackageRow({ pkg }: { pkg: PackageRisk }) {
 	const [expanded, setExpanded] = useState(false);
 	const [showAllCves, setShowAllCves] = useState(false);
 
+	const isAIExplanation = pkg.explanation && !isTemplateExplanation(pkg.explanation);
+
 	return (
 		<div className="bg-card border border-border rounded-xl overflow-hidden">
-			{/* Row */}
 			<button
 				onClick={() => setExpanded(!expanded)}
-				className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+				className="w-full flex items-start gap-3 px-4 py-4 hover:bg-muted/30 transition-colors text-left"
 			>
-				{/* Risk dot */}
-				<div className={`w-2 h-2 rounded-full shrink-0 ${RISK_DOT[pkg.riskLevel]}`} />
-
-				{/* Name + version */}
+				<div className={`w-2 h-2 rounded-full shrink-0 mt-1.25 ${RISK_DOT[pkg.riskLevel]}`} />
 				<div className="flex-1 min-w-0">
-					<div className="flex items-center gap-2 flex-wrap">
-						<span className="text-foreground text-sm font-medium truncate">{pkg.name}</span>
-						<span className="text-muted-foreground text-xs shrink-0">{pkg.declaredVersion}</span>
+					<div className="flex items-center gap-2 mb-1">
+						<span className="text-foreground text-sm font-semibold">{pkg.name}</span>
+						<span className="text-muted-foreground text-xs">{pkg.declaredVersion}</span>
 					</div>
-					<p className="text-muted-foreground text-xs mt-0.5 truncate">{pkg.explanation}</p>
+					<p className={`text-muted-foreground text-xs leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>{pkg.explanation}</p>
 				</div>
-
-				{/* Right side */}
-				<div className="flex items-center gap-3 shrink-0">
+				<div className="flex items-center gap-2.5 shrink-0 ml-4">
 					{pkg.cves.length > 0 && (
-						<span className="text-xs text-muted-foreground">
+						<span className="text-xs text-muted-foreground hidden sm:block">
 							{pkg.cves.length} CVE{pkg.cves.length > 1 ? 's' : ''}
 						</span>
 					)}
-					<Badge variant="outline" className={`text-xs ${RISK_BG[pkg.riskLevel]} ${RISK_COLORS[pkg.riskLevel]}`}>
+					<Badge variant="outline" className={`text-xs font-medium ${RISK_BG[pkg.riskLevel]} ${RISK_COLORS[pkg.riskLevel]}`}>
 						{pkg.riskLevel}
 					</Badge>
-					<span className={`text-sm font-bold ${RISK_COLORS[pkg.riskLevel]}`}>{pkg.riskScore}</span>
+					<span className={`text-sm font-bold min-w-6 text-right ${RISK_COLORS[pkg.riskLevel]}`}>{pkg.riskScore}</span>
 				</div>
 			</button>
 
-			{/* Expanded detail */}
 			{expanded && (
-				<div className="border-t border-border px-4 py-4 bg-muted/10">
-					{/* Signals */}
-					<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+				<div className="border-t border-border px-5 py-5 bg-muted/10 space-y-4">
+					{/* Signals grid */}
+					<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
 						{[
 							{ label: 'Deprecated', value: pkg.signals.isDeprecated ? 'Yes' : 'No', danger: pkg.signals.isDeprecated },
 							{ label: 'Last commit', value: `${pkg.signals.lastCommitDaysAgo}d ago`, danger: pkg.signals.lastCommitDaysAgo > 180 },
@@ -233,7 +286,7 @@ function PackageRow({ pkg }: { pkg: PackageRisk }) {
 								value: `${pkg.signals.downloadTrendPercent > 0 ? '+' : ''}${pkg.signals.downloadTrendPercent}%`,
 								danger: pkg.signals.downloadTrendPercent < -25,
 							},
-							{ label: 'CVEs', value: String(pkg.signals.openCveCount), danger: pkg.signals.openCveCount > 0 },
+							{ label: 'Weekly downloads', value: pkg.signals.weeklyDownloads.toLocaleString(), danger: false },
 						].map((s) => (
 							<div key={s.label} className="bg-card border border-border rounded-lg p-3">
 								<p className="text-muted-foreground text-xs mb-1">{s.label}</p>
@@ -241,25 +294,45 @@ function PackageRow({ pkg }: { pkg: PackageRisk }) {
 							</div>
 						))}
 					</div>
-					{/* Strategy */}
-					<div className="flex items-center gap-3 flex-wrap">
+
+					{/* Strategy + AI indicator */}
+					<div className="flex items-center gap-2 flex-wrap mb-3">
 						<Badge variant="outline" className="text-xs border-border text-muted-foreground">
 							Strategy: {pkg.fixStrategy}
 						</Badge>
-						{pkg.alternative && (
-							<Badge variant="outline" className="text-xs border-primary/40 text-primary">
-								Alternative: {pkg.alternative}
+						{isAIExplanation && (
+							<Badge variant="outline" className="text-xs border-primary/30 text-primary bg-primary/5">
+								AI analyzed
 							</Badge>
 						)}
 					</div>
-					{/* CVE list */}
+
+					{/* Alternative */}
+					{pkg.alternative && (
+						<div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4">
+							<p className="text-xs text-muted-foreground mb-1.5">Recommended alternative</p>
+							<div className="flex items-start gap-2">
+								<span className="text-sm font-semibold text-primary shrink-0">{pkg.alternative}</span>
+								{pkg.alternativeReason && <p className="text-xs text-muted-foreground leading-relaxed">{pkg.alternativeReason}</p>}
+							</div>
+						</div>
+					)}
+
+					{/* CVEs */}
 					{pkg.cves.length > 0 && (
-						<div className="mt-4">
+						<div>
 							<p className="text-xs text-muted-foreground mb-2">Vulnerabilities</p>
 							<div className="space-y-1.5">
 								{(showAllCves ? pkg.cves : pkg.cves.slice(0, 3)).map((cve) => (
 									<div key={cve.id} className="flex items-start gap-2 text-xs">
-										<span className={`shrink-0 font-mono ${RISK_COLORS[cve.severity]}`}>{cve.id}</span>
+										<Link
+											href={`https://github.com/advisories/${cve.id}`}
+											target="_blank"
+											rel="noopener noreferrer"
+											className={`shrink-0 font-mono hover:underline ${RISK_COLORS[cve.severity]}`}
+										>
+											{cve.id}
+										</Link>
 										<span className="text-muted-foreground">{cve.description}</span>
 									</div>
 								))}

@@ -1,5 +1,6 @@
 import { detectEcosystem, parseDependencies } from '@/backend/service/ecosystem.service';
 import { scanAllPackages } from '@/backend/service/risk.service';
+import { generateRiskExplanation, suggestAlternative } from '@/backend/service/gemini.service';
 import { getDbInstance } from '@/backend/db';
 import { scanJobs, scanResults } from '@/backend/db/schema';
 import { eq } from 'drizzle-orm';
@@ -23,6 +24,7 @@ export interface ScanMessage {
 	totalChunks?: number;
 	total?: number;
 	elasticOnly?: boolean;
+	geminiOnly?: boolean;
 	results?: PackageRisk[];
 }
 
@@ -31,7 +33,9 @@ const updateKV = async (env: CloudflareEnv, jobId: string, repoUrl: string, plat
 };
 
 export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
-	if (message.elasticOnly) {
+	if (message.geminiOnly) {
+		await processGeminiEnrichment(message, env);
+	} else if (message.elasticOnly) {
 		try {
 			await indexScanResults(message.results ?? []);
 			logger.info('Elastic indexing complete', { jobId: message.jobId });
@@ -45,6 +49,87 @@ export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): 
 	}
 };
 
+const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
+	const { jobId, repoUrl, platform, results } = message;
+	if (!results?.length || !jobId) return;
+
+	const db = getDbInstance(env.DB);
+
+	logger.info('Starting Gemini enrichment', { jobId, count: results.length });
+
+	const enriched = [...results];
+	const highRisk = enriched.filter((r) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH' || r.riskLevel === 'MEDIUM');
+
+	for (const pkg of highRisk) {
+		const idx = enriched.findIndex((r) => r.name === pkg.name);
+		if (idx === -1) continue;
+
+		try {
+			const explanation = await generateRiskExplanation(
+				pkg.name,
+				pkg.ecosystem,
+				pkg.signals,
+				pkg.cves,
+				env.GEMINI_API_KEY,
+				env.GROQ_API_KEY,
+			).catch(() => '');
+
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+
+			const alternative =
+				pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365
+					? await suggestAlternative(pkg.name, pkg.ecosystem, pkg.signals.isDeprecated, env.GEMINI_API_KEY, env.GROQ_API_KEY).catch(
+							() => null,
+						)
+					: null;
+
+			if (explanation) enriched[idx].explanation = explanation;
+			if (alternative) {
+				enriched[idx].alternative = alternative.name;
+				enriched[idx].alternativeReason = alternative.reason;
+			}
+
+			logger.info('AI enriched', { package: pkg.name });
+		} catch (err) {
+			logger.error('AI enrichment failed', err, { package: pkg.name });
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 2000));
+	}
+
+	const summary = {
+		totalPackages: enriched.length,
+		criticalCount: enriched.filter((r) => r.riskLevel === 'CRITICAL').length,
+		highCount: enriched.filter((r) => r.riskLevel === 'HIGH').length,
+		mediumCount: enriched.filter((r) => r.riskLevel === 'MEDIUM').length,
+		lowCount: enriched.filter((r) => r.riskLevel === 'LOW').length,
+		safeCount: enriched.filter((r) => r.riskLevel === 'SAFE').length,
+	};
+
+	await db
+		.update(scanResults)
+		.set({ ...summary, resultsJson: JSON.stringify(enriched) })
+		.where(eq(scanResults.jobId, jobId));
+
+	await updateKV(env, jobId, repoUrl, platform, {
+		status: 'complete',
+		aiEnriching: false,
+		aiEnriched: true,
+		progress: enriched.length,
+		total: enriched.length,
+		summary,
+		results: enriched,
+	});
+
+	logger.info('Gemini enrichment complete', { jobId, enriched: highRisk.length });
+
+	try {
+		await env.SCAN_QUEUE.send({ jobId, repoUrl, platform, elasticOnly: true, results: enriched });
+	} catch (err) {
+		logger.error('Failed to queue elastic indexing', err, { jobId });
+	}
+};
+
 const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
 	const { jobId, repoUrl, platform, token } = message;
 	const db = getDbInstance(env.DB);
@@ -55,7 +140,6 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 		await updateKV(env, jobId, repoUrl, platform, { status: 'scanning', progress: 0, total: 0 });
 		await db.update(scanJobs).set({ status: 'scanning' }).where(eq(scanJobs.id, jobId));
 
-		// Ecosystem detect
 		const ecosystem = await detectEcosystem(repoUrl, platform, token);
 
 		if (!ecosystem.ecosystem) {
@@ -77,7 +161,6 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 			.set({ ecosystem: ecosystem.ecosystem, packageManager: ecosystem.packageManager ?? undefined })
 			.where(eq(scanJobs.id, jobId));
 
-		// Parse dependencies
 		const deps = await parseDependencies(repoUrl, platform, token);
 		const filtered = Object.entries(deps).filter(([name]) => !name.startsWith('@types/'));
 		const total = filtered.length;
@@ -97,7 +180,6 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 			return;
 		}
 
-		// Split into chunks
 		const chunks: Array<Record<string, string>> = [];
 		for (let i = 0; i < filtered.length; i += CHUNK_SIZE) {
 			chunks.push(Object.fromEntries(filtered.slice(i, i + CHUNK_SIZE)));
@@ -105,7 +187,6 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 
 		logger.info('Splitting scan into chunks', { jobId, total, chunks: chunks.length });
 
-		// Send each chunk as separate queue message
 		for (let i = 0; i < chunks.length; i++) {
 			await env.SCAN_QUEUE.send({
 				jobId,
@@ -139,24 +220,21 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 	try {
 		logger.info('Processing chunk', { jobId, chunkIndex, totalChunks });
 
-		// Scan this chunk
 		const chunkResults = await scanAllPackages(
 			packages!,
 			(ecosystem as Ecosystem) ?? 'nodejs',
 			token ?? env.GITHUB_TOKEN,
 			undefined,
-			env.GEMINI_API_KEY,
-			env.GROQ_API_KEY,
+			undefined,
+			undefined,
 		);
 
-		// Fetch existing results from D1
 		const existing = await db.query.scanResults.findFirst({
 			where: eq(scanResults.jobId, jobId!),
 		});
 
 		const allResults: PackageRisk[] = [...(existing ? JSON.parse(existing.resultsJson ?? '[]') : []), ...chunkResults];
 
-		// Upsert scan results
 		if (existing) {
 			await db
 				.update(scanResults)
@@ -179,9 +257,8 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		const scannedSoFar = Math.min((chunkIndex! + 1) * CHUNK_SIZE, total!);
 		const isLastChunk = chunkIndex === totalChunks! - 1;
 
-		// Update progress
 		await updateKV(env, jobId!, repoUrl, platform, {
-			status: isLastChunk ? 'complete' : 'scanning',
+			status: 'scanning',
 			progress: scannedSoFar,
 			total: total!,
 			ecosystem,
@@ -192,7 +269,6 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 
 		await db.update(scanJobs).set({ progress: scannedSoFar }).where(eq(scanJobs.id, jobId!));
 
-		// Last chunk - finalize
 		if (isLastChunk) {
 			const sorted = allResults.sort((a, b) => b.riskScore - a.riskScore);
 
@@ -205,7 +281,6 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 				safeCount: sorted.filter((r) => r.riskLevel === 'SAFE').length,
 			};
 
-			// Update scan_results with final summary
 			await db
 				.update(scanResults)
 				.set({ ...summary, resultsJson: JSON.stringify(sorted) })
@@ -215,6 +290,8 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 
 			await updateKV(env, jobId!, repoUrl, platform, {
 				status: 'complete',
+				aiEnriching: true,
+				aiEnriched: false,
 				progress: total!,
 				total: total!,
 				ecosystem,
@@ -228,9 +305,15 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 			logger.info('Scan job complete', { jobId, totalPackages: sorted.length });
 
 			try {
-				await env.SCAN_QUEUE.send({ jobId, elasticOnly: true, results: sorted });
+				await env.SCAN_QUEUE.send({
+					jobId: jobId!,
+					repoUrl,
+					platform,
+					geminiOnly: true,
+					results: sorted,
+				});
 			} catch (err) {
-				logger.error('Failed to queue elastic indexing', err, { jobId });
+				logger.error('Failed to queue gemini enrichment', err, { jobId });
 			}
 		}
 	} catch (err) {

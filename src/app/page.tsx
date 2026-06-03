@@ -24,7 +24,6 @@ export default function Home() {
 	const [error, setError] = useState('');
 	const [recentScans, setRecentScans] = useState<ScanHistory[]>([]);
 
-	// Load recent scans from localStorage
 	useEffect(() => {
 		const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
 		setRecentScans(history);
