@@ -59,6 +59,11 @@ function ScanPageComponent() {
 
 	// Redirect to dashboard when complete
 	useEffect(() => {
+		if (job?.status === 'complete' || job?.status === 'error') {
+			const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
+			const updated = history.map((s: any) => (s.jobId === jobId ? { ...s, status: job.status } : s));
+			localStorage.setItem('depshield_scans', JSON.stringify(updated));
+		}
 		if (job?.status === 'complete') {
 			setTimeout(() => {
 				router.push(`/dashboard?jobId=${jobId}`);

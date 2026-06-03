@@ -147,6 +147,8 @@ export interface StatusResponse {
 	};
 	results?: PackageRisk[];
 	error?: string;
+	aiEnriching?: boolean;
+	aiEnriched?: boolean;
 }
 
 export interface SimulateRequest {
