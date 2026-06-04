@@ -219,7 +219,6 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 
 	const db = getDbInstance(env.DB);
 	const githubToken = token ?? env.GITHUB_TOKEN;
-	const gitlabToken = token ?? env.GITLAB_TOKEN;
 
 	try {
 		logger.info('Processing chunk', { jobId, chunkIndex, totalChunks });
@@ -228,7 +227,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 			packages!,
 			(ecosystem as Ecosystem) ?? 'nodejs',
 			env,
-			platform === 'github' ? githubToken : gitlabToken,
+			githubToken,
 			undefined,
 			undefined,
 			undefined,
