@@ -19,7 +19,10 @@ const groqGenerate = async (prompt: string, apiKey: string): Promise<string> => 
 		}),
 	});
 
-	if (!res.ok) throw new Error(`Groq API error: ${res.status}`);
+	if (!res.ok) {
+		logger.error(`Groq API error: ${res.status} - ${await res.text()}`);
+		throw new Error(`Groq API error: ${res.status}`);
+	}
 
 	const data = (await res.json()) as any;
 	return data.choices?.[0]?.message?.content ?? '';
@@ -35,7 +38,10 @@ const geminiGenerate = async (prompt: string, apiKey: string): Promise<string> =
 		}),
 	});
 
-	if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
+	if (!res.ok) {
+		logger.error(`Gemini API error: ${res.status} - ${await res.text()}`);
+		throw new Error(`Gemini API error: ${res.status}`);
+	}
 
 	const data = (await res.json()) as any;
 	return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
@@ -54,6 +60,7 @@ const aiGenerate = async (prompt: string, geminiApiKey?: string, groqApiKey?: st
 		return await groqGenerate(prompt, groqApiKey);
 	}
 
+	logger.error('No AI provider available');
 	throw new Error('No AI provider available');
 };
 

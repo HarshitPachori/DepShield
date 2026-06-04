@@ -31,6 +31,7 @@ const elasticFetch = async (path: string, env: CloudflareEnv, body?: unknown, me
 
 	if (!res.ok && res.status !== 404) {
 		const text = await res.text();
+		logger.error(`Elastic error ${res.status}: ${text}`);
 		throw new Error(`Elastic error ${res.status}: ${text}`);
 	}
 
