@@ -1,6 +1,7 @@
 import type { Ecosystem, EcosystemDetection, PackageManager } from '@/types';
 import { parseByEcosystem, parseGithubUrl, parseGitlabUrl } from '@backend/helper';
 import { COMMON_SUBDIRS, ECOSYSTEM_FILES, PACKAGE_MANAGER_FILES } from '@/backend/constants';
+import logger from '@backend/util/logger';
 
 const fetchGithubFileList = async (repoUrl: string, path: string = '', token?: string): Promise<string[]> => {
 	const { owner, repo } = parseGithubUrl(repoUrl);
@@ -14,7 +15,10 @@ const fetchGithubFileList = async (repoUrl: string, path: string = '', token?: s
 	const apiPath = path ? `/contents/${path}` : '/contents/';
 	const res = await fetch(`https://api.github.com/repos/${owner}/${repo}${apiPath}`, { headers });
 
-	if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+	if (!res.ok) {
+		logger.error(`GitHub API error: ${res.status} - ${await res.text()}`);
+		throw new Error(`GitHub API error: ${res.status}`);
+	}
 
 	const files = (await res.json()) as Array<{ name: string }>;
 	return files.map((f) => f.name);
@@ -29,7 +33,10 @@ const fetchGitlabFileList = async (repoUrl: string, path: string = '', token?: s
 
 	const pathParam = path ? `&path=${encodeURIComponent(path)}` : '';
 	const res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/tree?ref=main${pathParam}`, { headers });
-	if (!res.ok) throw new Error(`GitLab API error: ${res.status}`);
+	if (!res.ok) {
+		logger.error(`GitLab API error: ${res.status} - ${await res.text()}`);
+		throw new Error(`GitLab API error: ${res.status}`);
+	}
 	const files = (await res.json()) as Array<{ name: string }>;
 	return files.map((f) => f.name);
 };
@@ -145,7 +152,10 @@ export const parseDependencies = async (
 			res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/master/${filePath}`, { headers });
 		}
 
-		if (!res.ok) throw new Error(`Failed to fetch ${filePath}`);
+		if (!res.ok) {
+			logger.error(`Failed to fetch ${filePath} from GitHub: ${res.status} - ${await res.text()}`);
+			throw new Error(`Failed to fetch ${filePath}`);
+		}
 		content = await res.text();
 	} else {
 		const { fullPath } = parseGitlabUrl(repoUrl);
@@ -160,7 +170,10 @@ export const parseDependencies = async (
 			res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/files/${encodedFile}/raw?ref=master`, { headers });
 		}
 
-		if (!res.ok) throw new Error(`Failed to fetch ${filePath}`);
+		if (!res.ok) {
+			logger.error(`Failed to fetch ${filePath} from GitLab: ${res.status} - ${await res.text()}`);
+			throw new Error(`Failed to fetch ${filePath}`);
+		}
 		content = await res.text();
 	}
 
