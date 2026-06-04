@@ -134,6 +134,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 	const { jobId, repoUrl, platform, token } = message;
 	const db = getDbInstance(env.DB);
 	const githubToken = token ?? env.GITHUB_TOKEN;
+	const gitlabToken = token ?? env.GITLAB_TOKEN;
 
 	try {
 		logger.info('Scan job started', { jobId, repoUrl, platform });
@@ -141,7 +142,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 		await updateKV(env, jobId, repoUrl, platform, { status: 'scanning', progress: 0, total: 0 });
 		await db.update(scanJobs).set({ status: 'scanning' }).where(eq(scanJobs.id, jobId));
 
-		const ecosystem = await detectEcosystem(repoUrl, platform, githubToken);
+		const ecosystem = await detectEcosystem(repoUrl, platform, platform === 'github' ? githubToken : gitlabToken);
 
 		if (!ecosystem.ecosystem) {
 			await updateKV(env, jobId, repoUrl, platform, { status: 'error', error: 'Could not detect ecosystem' });
@@ -162,7 +163,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 			.set({ ecosystem: ecosystem.ecosystem, packageManager: ecosystem.packageManager ?? undefined })
 			.where(eq(scanJobs.id, jobId));
 
-		const deps = await parseDependencies(repoUrl, platform, githubToken);
+		const deps = await parseDependencies(repoUrl, platform, platform === 'github' ? githubToken : gitlabToken);
 		const filtered = Object.entries(deps).filter(([name]) => !name.startsWith('@types/'));
 		const total = filtered.length;
 
@@ -193,7 +194,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 				jobId,
 				repoUrl,
 				platform,
-				token,
+				token: platform === 'github' ? githubToken : gitlabToken,
 				packages: chunks[i],
 				ecosystem: ecosystem.ecosystem,
 				packageManager: ecosystem.packageManager,
@@ -218,6 +219,8 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 
 	const db = getDbInstance(env.DB);
 	const githubToken = token ?? env.GITHUB_TOKEN;
+	const gitlabToken = token ?? env.GITLAB_TOKEN;
+
 	try {
 		logger.info('Processing chunk', { jobId, chunkIndex, totalChunks });
 
@@ -225,7 +228,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 			packages!,
 			(ecosystem as Ecosystem) ?? 'nodejs',
 			env,
-			githubToken,
+			platform === 'github' ? githubToken : gitlabToken,
 			undefined,
 			undefined,
 			undefined,

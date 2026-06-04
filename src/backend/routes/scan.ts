@@ -18,7 +18,7 @@ const validateRepo = async (repoUrl: string, platform: string, token?: string) =
 	}
 	if (platform === 'gitlab') {
 		const { fullPath } = parseGitlabUrl(repoUrl);
-		const headers: Record<string, string> = {};
+		const headers: Record<string, string> = { 'User-Agent': 'DepShield/1.0' };
 		if (token) headers['PRIVATE-TOKEN'] = token;
 		const res = await fetch(`https://gitlab.com/api/v4/projects/${encodeURIComponent(fullPath)}`, { headers });
 		return res.ok;
@@ -36,6 +36,7 @@ export const scanRouter = new Hono<{ Bindings: CloudflareEnv }>();
 scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 	const { repoUrl, token } = c.req.valid('json');
 	const githubToken = token ?? c.env.GITHUB_TOKEN;
+	const gitlabToken = token ?? c.env.GITLAB_TOKEN;
 
 	const platform = detectPlatform(repoUrl);
 	if (!platform) {
@@ -43,7 +44,7 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 		return c.json(errorResponse('Unsupported platform. Only GitHub and GitLab are supported.', 400), 400);
 	}
 
-	const exists = await validateRepo(repoUrl, platform, githubToken);
+	const exists = await validateRepo(repoUrl, platform, platform === 'github' ? githubToken : gitlabToken);
 	if (!exists) {
 		return c.json(errorResponse('Repository not found. Check the URL and try again.', 404), 404);
 	}
@@ -63,7 +64,7 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 		expirationTtl: 86400,
 	});
 
-	await c.env.SCAN_QUEUE.send({ jobId, repoUrl, platform, token: githubToken });
+	await c.env.SCAN_QUEUE.send({ jobId, repoUrl, platform, token: platform === 'github' ? githubToken : gitlabToken });
 
 	return c.json(successResponse({ jobId, status: 'pending', repoUrl, platform }, 'Scan job created'), 201);
 });
