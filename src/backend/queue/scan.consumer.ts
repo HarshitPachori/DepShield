@@ -37,7 +37,7 @@ export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): 
 		await processGeminiEnrichment(message, env);
 	} else if (message.elasticOnly) {
 		try {
-			await indexScanResults(message.results ?? []);
+			await indexScanResults(message.results ?? [], env);
 			logger.info('Elastic indexing complete', { jobId: message.jobId });
 		} catch (err) {
 			logger.error('Elastic indexing failed', err, { jobId: message.jobId });

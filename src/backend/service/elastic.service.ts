@@ -4,9 +4,9 @@ import type { PackageRisk } from '@/types';
 export const SIGNALS_INDEX = 'depshield-signals';
 export const CACHE_INDEX = 'depshield-cache';
 
-const indexExists = async (indexName: string): Promise<boolean> => {
-	const base = process.env.ELASTIC_URL ?? 'http://localhost:9200';
-	const apiKey = process.env.ELASTIC_API_KEY;
+const indexExists = async (indexName: string, env: CloudflareEnv): Promise<boolean> => {
+	const base = env.ELASTIC_URL ?? 'http://localhost:9200';
+	const apiKey = env.ELASTIC_API_KEY;
 	const headers: Record<string, string> = {};
 	if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
 
@@ -14,9 +14,9 @@ const indexExists = async (indexName: string): Promise<boolean> => {
 	return res.status === 200;
 };
 
-const elasticFetch = async (path: string, body?: unknown, method?: string): Promise<any> => {
-	const base = process.env.ELASTIC_URL ?? 'http://localhost:9200';
-	const apiKey = process.env.ELASTIC_API_KEY;
+const elasticFetch = async (path: string, env: CloudflareEnv, body?: unknown, method?: string): Promise<any> => {
+	const base = env.ELASTIC_URL ?? 'http://localhost:9200';
+	const apiKey = env.ELASTIC_API_KEY;
 
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json',
@@ -37,9 +37,9 @@ const elasticFetch = async (path: string, body?: unknown, method?: string): Prom
 	return res.json();
 };
 
-const elasticBulk = async (lines: string[]): Promise<void> => {
-	const base = process.env.ELASTIC_URL ?? 'http://localhost:9200';
-	const apiKey = process.env.ELASTIC_API_KEY;
+const elasticBulk = async (lines: string[], env: CloudflareEnv): Promise<void> => {
+	const base = env.ELASTIC_URL ?? 'http://localhost:9200';
+	const apiKey = env.ELASTIC_API_KEY;
 
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/x-ndjson',
@@ -53,11 +53,12 @@ const elasticBulk = async (lines: string[]): Promise<void> => {
 	});
 };
 
-export const createIndices = async (): Promise<void> => {
-	const signalsCheck = await indexExists(SIGNALS_INDEX);
+export const createIndices = async (env: CloudflareEnv): Promise<void> => {
+	const signalsCheck = await indexExists(SIGNALS_INDEX, env);
 	if (!signalsCheck) {
 		await elasticFetch(
 			`/${SIGNALS_INDEX}`,
+			env,
 			{
 				mappings: {
 					properties: {
@@ -79,10 +80,11 @@ export const createIndices = async (): Promise<void> => {
 		logger.info(`Index ${SIGNALS_INDEX} created`);
 	}
 
-	const cacheCheck = await indexExists(CACHE_INDEX);
+	const cacheCheck = await indexExists(CACHE_INDEX, env);
 	if (!cacheCheck) {
 		await elasticFetch(
 			`/${CACHE_INDEX}`,
+			env,
 			{
 				mappings: {
 					properties: {
@@ -112,10 +114,10 @@ export const createIndices = async (): Promise<void> => {
 	}
 };
 
-export const indexScanResults = async (results: PackageRisk[], ttlHours: number = 24): Promise<void> => {
+export const indexScanResults = async (results: PackageRisk[], env: CloudflareEnv, ttlHours: number = 24): Promise<void> => {
 	if (!results.length) return;
 
-	await createIndices();
+	await createIndices(env);
 
 	const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
 	const cachedAt = new Date().toISOString();
@@ -143,13 +145,13 @@ export const indexScanResults = async (results: PackageRisk[], ttlHours: number 
 		}),
 	]);
 
-	await elasticBulk(lines);
+	await elasticBulk(lines, env);
 	logger.info('Indexed scan results to Elastic', { count: results.length });
 };
 
-export const getCachedPackage = async (name: string, ecosystem: string): Promise<PackageRisk | null> => {
+export const getCachedPackage = async (name: string, ecosystem: string, env: CloudflareEnv): Promise<PackageRisk | null> => {
 	try {
-		const data = await elasticFetch(`/${CACHE_INDEX}/_search`, {
+		const data = await elasticFetch(`/${CACHE_INDEX}/_search`, env, {
 			query: {
 				bool: {
 					must: [{ term: { package_name: name } }, { term: { ecosystem } }, { range: { expires_at: { gte: new Date().toISOString() } } }],
@@ -185,9 +187,13 @@ export const getCachedPackage = async (name: string, ecosystem: string): Promise
 	}
 };
 
-export const searchPackageSignals = async (packageName: string, ecosystem: string = 'npm'): Promise<PackageSignal[]> => {
+export const searchPackageSignals = async (
+	packageName: string,
+	ecosystem: string = 'npm',
+	env: CloudflareEnv,
+): Promise<PackageSignal[]> => {
 	try {
-		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, {
+		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, env, {
 			query: {
 				bool: {
 					must: [{ term: { package_name: packageName } }, { term: { ecosystem } }],
@@ -202,9 +208,9 @@ export const searchPackageSignals = async (packageName: string, ecosystem: strin
 	}
 };
 
-export const searchAlternatives = async (packageName: string, ecosystem: string = 'npm'): Promise<string[]> => {
+export const searchAlternatives = async (packageName: string, ecosystem: string = 'npm', env: CloudflareEnv): Promise<string[]> => {
 	try {
-		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, {
+		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, env, {
 			query: {
 				bool: {
 					must: [{ term: { package_name: packageName } }, { term: { signal_type: 'alternative' } }],
@@ -219,9 +225,9 @@ export const searchAlternatives = async (packageName: string, ecosystem: string 
 	}
 };
 
-export const searchMigrationGuides = async (packageName: string): Promise<string> => {
+export const searchMigrationGuides = async (packageName: string, env: CloudflareEnv): Promise<string> => {
 	try {
-		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, {
+		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, env, {
 			query: {
 				bool: {
 					must: { term: { package_name: packageName } },
@@ -246,13 +252,13 @@ export const searchMigrationGuides = async (packageName: string): Promise<string
 	}
 };
 
-export const indexPackageSignal = async (signal: PackageSignal): Promise<void> => {
-	await elasticFetch(`/${SIGNALS_INDEX}/_doc`, signal);
+export const indexPackageSignal = async (signal: PackageSignal, env: CloudflareEnv): Promise<void> => {
+	await elasticFetch(`/${SIGNALS_INDEX}/_doc`, env, signal);
 };
 
-export const bulkIndexSignals = async (signals: PackageSignal[]): Promise<void> => {
+export const bulkIndexSignals = async (signals: PackageSignal[], env: CloudflareEnv): Promise<void> => {
 	const lines = signals.flatMap((doc) => [JSON.stringify({ index: { _index: SIGNALS_INDEX } }), JSON.stringify(doc)]);
-	await elasticBulk(lines);
+	await elasticBulk(lines, env);
 };
 
 export interface PackageSignal {
