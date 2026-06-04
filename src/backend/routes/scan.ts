@@ -35,8 +35,8 @@ export const scanRouter = new Hono<{ Bindings: CloudflareEnv }>();
 
 scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 	const { repoUrl, token } = c.req.valid('json');
-	const githubToken = token ?? c.env.GITHUB_TOKEN;
-	const gitlabToken = token ?? c.env.GITLAB_TOKEN;
+	const githubToken = c.env.GITHUB_TOKEN;
+	const gitlabToken = c.env.GITLAB_TOKEN;
 
 	const platform = detectPlatform(repoUrl);
 	if (!platform) {

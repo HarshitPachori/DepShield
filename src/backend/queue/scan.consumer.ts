@@ -133,8 +133,8 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
 	const { jobId, repoUrl, platform, token } = message;
 	const db = getDbInstance(env.DB);
-	const githubToken = token ?? env.GITHUB_TOKEN;
-	const gitlabToken = token ?? env.GITLAB_TOKEN;
+	const githubToken = env.GITHUB_TOKEN;
+	const gitlabToken = env.GITLAB_TOKEN;
 
 	try {
 		logger.info('Scan job started', { jobId, repoUrl, platform });
@@ -218,7 +218,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		message;
 
 	const db = getDbInstance(env.DB);
-	const githubToken = token ?? env.GITHUB_TOKEN;
+	const githubToken = env.GITHUB_TOKEN;
 
 	try {
 		logger.info('Processing chunk', { jobId, chunkIndex, totalChunks });
