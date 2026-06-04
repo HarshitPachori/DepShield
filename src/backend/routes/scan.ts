@@ -11,12 +11,16 @@ import { parseGithubUrl, parseGitlabUrl } from '@backend/helper';
 const validateRepo = async (repoUrl: string, platform: string, token?: string) => {
 	if (platform === 'github') {
 		const { owner, repo } = parseGithubUrl(repoUrl);
-		const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: { 'User-Agent': 'DepShield/1.0' } });
+		const headers: Record<string, string> = { 'User-Agent': 'DepShield/1.0' };
+		if (token) headers['Authorization'] = `Bearer ${token}`;
+		const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
 		return res.ok;
 	}
 	if (platform === 'gitlab') {
 		const { fullPath } = parseGitlabUrl(repoUrl);
-		const res = await fetch(`https://gitlab.com/api/v4/projects/${encodeURIComponent(fullPath)}`);
+		const headers: Record<string, string> = {};
+		if (token) headers['PRIVATE-TOKEN'] = token;
+		const res = await fetch(`https://gitlab.com/api/v4/projects/${encodeURIComponent(fullPath)}`, { headers });
 		return res.ok;
 	}
 	return false;
@@ -31,6 +35,7 @@ export const scanRouter = new Hono<{ Bindings: CloudflareEnv }>();
 
 scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 	const { repoUrl, token } = c.req.valid('json');
+	const githubToken = token ?? c.env.GITHUB_TOKEN;
 
 	const platform = detectPlatform(repoUrl);
 	if (!platform) {
@@ -38,7 +43,7 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 		return c.json(errorResponse('Unsupported platform. Only GitHub and GitLab are supported.', 400), 400);
 	}
 
-	const exists = await validateRepo(repoUrl, platform, token);
+	const exists = await validateRepo(repoUrl, platform, githubToken);
 	if (!exists) {
 		return c.json(errorResponse('Repository not found. Check the URL and try again.', 404), 404);
 	}
@@ -58,7 +63,7 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 		expirationTtl: 86400,
 	});
 
-	await c.env.SCAN_QUEUE.send({ jobId, repoUrl, platform, token });
+	await c.env.SCAN_QUEUE.send({ jobId, repoUrl, platform, token: githubToken });
 
 	return c.json(successResponse({ jobId, status: 'pending', repoUrl, platform }, 'Scan job created'), 201);
 });
