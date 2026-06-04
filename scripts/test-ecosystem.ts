@@ -44,6 +44,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const env = {} as any;
 
 console.log('Detecting ecosystem...');
 const ecosystem = await detectEcosystem(TEST_REPO, 'github', GITHUB_TOKEN);
@@ -57,6 +58,7 @@ console.log('\nScanning with Gemini...');
 const results = await scanAllPackages(
 	deps,
 	ecosystem.ecosystem ?? 'nodejs',
+	env,
 	GITHUB_TOKEN,
 	(scanned, total) => process.stdout.write(`\rProgress: ${scanned}/${total}`),
 	GEMINI_API_KEY,

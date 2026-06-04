@@ -223,6 +223,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		const chunkResults = await scanAllPackages(
 			packages!,
 			(ecosystem as Ecosystem) ?? 'nodejs',
+			env,
 			token ?? env.GITHUB_TOKEN,
 			undefined,
 			undefined,

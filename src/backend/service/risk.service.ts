@@ -69,9 +69,10 @@ export const scanPackage = async (
 	name: string,
 	declaredVersion: string,
 	ecosystem: Ecosystem = 'nodejs',
+	env: CloudflareEnv,
 	githubToken?: string,
 ): Promise<PackageRisk> => {
-	const cached = await getCachedPackage(name, ecosystem).catch(() => null);
+	const cached = await getCachedPackage(name, ecosystem, env).catch(() => null);
 	if (cached) {
 		logger.info('Cache hit', { package: name, ecosystem });
 		return cached;
@@ -132,6 +133,7 @@ export const scanPackage = async (
 export const scanAllPackages = async (
 	deps: Record<string, string>,
 	ecosystem: Ecosystem = 'nodejs',
+	env: CloudflareEnv,
 	githubToken?: string,
 	onProgress?: (scanned: number, total: number) => void,
 	geminiApiKey?: string,
@@ -148,7 +150,7 @@ export const scanAllPackages = async (
 		const batch = filtered.slice(i, i + BATCH_SIZE);
 
 		const batchResults = await Promise.all(
-			batch.map(([name, version]) => scanPackage(name, version, ecosystem, githubToken).catch(() => null)),
+			batch.map(([name, version]) => scanPackage(name, version, ecosystem, env, githubToken).catch(() => null)),
 		);
 
 		for (const result of batchResults) {

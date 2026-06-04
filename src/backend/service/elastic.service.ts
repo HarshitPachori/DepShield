@@ -1,5 +1,5 @@
-import logger from '@backend/util/logger';
 import type { PackageRisk } from '@/types';
+import logger from '@backend/util/logger';
 
 export const SIGNALS_INDEX = 'depshield-signals';
 export const CACHE_INDEX = 'depshield-cache';
