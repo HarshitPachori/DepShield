@@ -133,6 +133,7 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
 	const { jobId, repoUrl, platform, token } = message;
 	const db = getDbInstance(env.DB);
+	const githubToken = token ?? env.GITHUB_TOKEN;
 
 	try {
 		logger.info('Scan job started', { jobId, repoUrl, platform });
@@ -140,7 +141,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 		await updateKV(env, jobId, repoUrl, platform, { status: 'scanning', progress: 0, total: 0 });
 		await db.update(scanJobs).set({ status: 'scanning' }).where(eq(scanJobs.id, jobId));
 
-		const ecosystem = await detectEcosystem(repoUrl, platform, token);
+		const ecosystem = await detectEcosystem(repoUrl, platform, githubToken);
 
 		if (!ecosystem.ecosystem) {
 			await updateKV(env, jobId, repoUrl, platform, { status: 'error', error: 'Could not detect ecosystem' });
@@ -161,7 +162,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 			.set({ ecosystem: ecosystem.ecosystem, packageManager: ecosystem.packageManager ?? undefined })
 			.where(eq(scanJobs.id, jobId));
 
-		const deps = await parseDependencies(repoUrl, platform, token);
+		const deps = await parseDependencies(repoUrl, platform, githubToken);
 		const filtered = Object.entries(deps).filter(([name]) => !name.startsWith('@types/'));
 		const total = filtered.length;
 
@@ -216,7 +217,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		message;
 
 	const db = getDbInstance(env.DB);
-
+	const githubToken = token ?? env.GITHUB_TOKEN;
 	try {
 		logger.info('Processing chunk', { jobId, chunkIndex, totalChunks });
 
@@ -224,7 +225,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 			packages!,
 			(ecosystem as Ecosystem) ?? 'nodejs',
 			env,
-			token ?? env.GITHUB_TOKEN,
+			githubToken,
 			undefined,
 			undefined,
 			undefined,
