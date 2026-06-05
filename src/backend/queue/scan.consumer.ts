@@ -74,7 +74,7 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 				env.GROQ_API_KEY,
 			).catch(() => '');
 
-			await new Promise((resolve) => setTimeout(resolve, 2000));
+			// await new Promise((resolve) => setTimeout(resolve, 2000));
 
 			const alternative =
 				pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365
@@ -94,7 +94,7 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 			logger.error('AI enrichment failed', err, { package: pkg.name });
 		}
 
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		await new Promise((resolve) => setTimeout(resolve, 1000));
 	}
 
 	const summary = {
@@ -240,22 +240,37 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		const allResults: PackageRisk[] = [...(existing ? JSON.parse(existing.resultsJson ?? '[]') : []), ...chunkResults];
 
 		if (existing) {
+			const merged = [...JSON.parse(existing.resultsJson ?? '[]'), ...chunkResults];
 			await db
 				.update(scanResults)
-				.set({ resultsJson: JSON.stringify(allResults) })
+				.set({ resultsJson: JSON.stringify(merged) })
 				.where(eq(scanResults.jobId, jobId!));
 		} else {
-			await db.insert(scanResults).values({
-				id: crypto.randomUUID(),
-				jobId: jobId!,
-				resultsJson: JSON.stringify(allResults),
-				totalPackages: 0,
-				criticalCount: 0,
-				highCount: 0,
-				mediumCount: 0,
-				lowCount: 0,
-				safeCount: 0,
-			});
+			try {
+				await db.insert(scanResults).values({
+					id: crypto.randomUUID(),
+					jobId: jobId!,
+					resultsJson: JSON.stringify(chunkResults),
+					totalPackages: 0,
+					criticalCount: 0,
+					highCount: 0,
+					mediumCount: 0,
+					lowCount: 0,
+					safeCount: 0,
+				});
+			} catch (insertErr) {
+				// lost the race — another chunk inserted first, retry as update
+				const fresh = await db.query.scanResults.findFirst({
+					where: eq(scanResults.jobId, jobId!),
+				});
+				if (fresh) {
+					const merged = [...JSON.parse(fresh.resultsJson ?? '[]'), ...chunkResults];
+					await db
+						.update(scanResults)
+						.set({ resultsJson: JSON.stringify(merged) })
+						.where(eq(scanResults.jobId, jobId!));
+				}
+			}
 		}
 
 		const scannedSoFar = Math.min((chunkIndex! + 1) * CHUNK_SIZE, total!);
@@ -323,6 +338,10 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 	} catch (err) {
 		const error = err instanceof Error ? err.message : 'Unknown error';
 		logger.error('Chunk processing failed', err, { jobId, chunkIndex });
+		await updateKV(env, jobId!, repoUrl, platform, {
+			status: 'error',
+			error: `Chunk ${chunkIndex} failed: ${error}`,
+		}).catch(() => {});
 		throw err;
 	}
 };

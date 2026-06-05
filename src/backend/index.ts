@@ -8,7 +8,7 @@ import mainRouter from '@backend/routes';
 
 const app = new Hono().basePath('/api');
 
-app.use('*', logger());
+// app.use('*', logger());
 app.use('*', secureHeaders());
 
 // ←←←  IMPORTANT: Put env fixing middleware FIRST (before CORS)
