@@ -150,7 +150,12 @@ export const scanAllPackages = async (
 		const batch = filtered.slice(i, i + BATCH_SIZE);
 
 		const batchResults = await Promise.all(
-			batch.map(([name, version]) => scanPackage(name, version, ecosystem, env, githubToken).catch(() => null)),
+			batch.map(([name, version]) =>
+				scanPackage(name, version, ecosystem, env, githubToken).catch((err) => {
+					logger.error('scanPackage failed', err, { package: name, version });
+					return null;
+				}),
+			),
 		);
 
 		for (const result of batchResults) {
@@ -164,42 +169,42 @@ export const scanAllPackages = async (
 		}
 	}
 
-	if (geminiApiKey || groqApiKey) {
-		const highRisk = results.filter((r) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH' || r.riskLevel === 'MEDIUM');
+	// if (geminiApiKey || groqApiKey) {
+	// 	const highRisk = results.filter((r) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH' || r.riskLevel === 'MEDIUM');
 
-		for (const pkg of highRisk) {
-			const idx = results.findIndex((r) => r.name === pkg.name);
-			if (idx === -1) continue;
+	// 	for (const pkg of highRisk) {
+	// 		const idx = results.findIndex((r) => r.name === pkg.name);
+	// 		if (idx === -1) continue;
 
-			try {
-				const geminiExplanation = await generateRiskExplanation(
-					pkg.name,
-					pkg.ecosystem,
-					pkg.signals,
-					pkg.cves,
-					geminiApiKey,
-					groqApiKey,
-				).catch(() => '');
-				await new Promise((resolve) => setTimeout(resolve, 2000));
-				const geminiAlternative =
-					pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365
-						? await suggestAlternative(pkg.name, pkg.ecosystem, pkg.signals.isDeprecated, geminiApiKey, groqApiKey).catch(() => null)
-						: null;
+	// 		try {
+	// 			const geminiExplanation = await generateRiskExplanation(
+	// 				pkg.name,
+	// 				pkg.ecosystem,
+	// 				pkg.signals,
+	// 				pkg.cves,
+	// 				geminiApiKey,
+	// 				groqApiKey,
+	// 			).catch(() => '');
+	// 			// await new Promise((resolve) => setTimeout(resolve, 2000));
+	// 			const geminiAlternative =
+	// 				pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365
+	// 					? await suggestAlternative(pkg.name, pkg.ecosystem, pkg.signals.isDeprecated, geminiApiKey, groqApiKey).catch(() => null)
+	// 					: null;
 
-				if (geminiExplanation) results[idx].explanation = geminiExplanation;
-				if (geminiAlternative) {
-					results[idx].alternative = geminiAlternative.name;
-					results[idx].alternativeReason = geminiAlternative.reason;
-				}
+	// 			if (geminiExplanation) results[idx].explanation = geminiExplanation;
+	// 			if (geminiAlternative) {
+	// 				results[idx].alternative = geminiAlternative.name;
+	// 				results[idx].alternativeReason = geminiAlternative.reason;
+	// 			}
 
-				logger.info('Gemini enriched', { package: pkg.name, riskLevel: pkg.riskLevel });
-			} catch (err) {
-				logger.error('Gemini failed for package', err, { package: pkg.name });
-			}
+	// 			logger.info('Gemini enriched', { package: pkg.name, riskLevel: pkg.riskLevel });
+	// 		} catch (err) {
+	// 			logger.error('Gemini failed for package', err, { package: pkg.name });
+	// 		}
 
-			await new Promise((resolve) => setTimeout(resolve, 2000));
-		}
-	}
+	// 		await new Promise((resolve) => setTimeout(resolve, 1000));
+	// 	}
+	// }
 
 	return results.sort((a, b) => b.riskScore - a.riskScore);
 };
