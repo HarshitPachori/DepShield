@@ -1,7 +1,7 @@
 type LogData = Record<string, unknown>;
 
 interface LogEntry {
-	level: 'INFO' | 'ERROR';
+	level: 'INFO' | 'ERROR' | 'WARN';
 	message: string;
 	data?: LogData;
 	error?: unknown;
@@ -21,6 +21,10 @@ const logger = {
 			...data,
 		};
 		console.error(JSON.stringify(entry, null, 2));
+	},
+	warn(message: string, data: LogData = {}): void {
+		const entry: LogEntry = { level: 'WARN', message, data };
+		console.warn(JSON.stringify(entry, null, 2));
 	},
 };
 

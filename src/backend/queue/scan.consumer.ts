@@ -163,7 +163,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 			.set({ ecosystem: ecosystem.ecosystem, packageManager: ecosystem.packageManager ?? undefined })
 			.where(eq(scanJobs.id, jobId));
 
-		const deps = await parseDependencies(repoUrl, platform, platform === 'github' ? githubToken : gitlabToken);
+		const deps = await parseDependencies(repoUrl, platform, platform === 'github' ? githubToken : gitlabToken, ecosystem);
 		const filtered = Object.entries(deps).filter(([name]) => !name.startsWith('@types/'));
 		const total = filtered.length;
 

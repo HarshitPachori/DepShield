@@ -130,8 +130,9 @@ export const parseDependencies = async (
 	repoUrl: string,
 	platform: 'github' | 'gitlab',
 	token?: string,
+	existingDetection?: EcosystemDetection,
 ): Promise<Record<string, string>> => {
-	const { ecosystem, dependencyFile, basePath } = await detectEcosystem(repoUrl, platform, token);
+	const { ecosystem, dependencyFile, basePath } = existingDetection ?? (await detectEcosystem(repoUrl, platform, token));
 
 	if (!ecosystem || !dependencyFile) return {};
 

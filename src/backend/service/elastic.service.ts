@@ -181,6 +181,7 @@ export const getCachedPackage = async (name: string, ecosystem: string, env: Clo
 				maintainerActive: hit.maintainer_active,
 				weeklyDownloads: hit.weekly_downloads,
 				openCveCount: hit.cve_count,
+				communitySignal: undefined,
 			},
 		} as PackageRisk;
 	} catch {

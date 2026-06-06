@@ -1,4 +1,5 @@
 import { NpmDownloadStats, NpmPackageInfo } from '@/types';
+import logger from '../util/logger';
 
 export const fetchPyPICommitActivity = async (
 	packageName: string,
@@ -46,7 +47,8 @@ export const fetchPyPICommitActivity = async (
 			lastCommitDaysAgo,
 			maintainerActive: lastCommitDaysAgo < 90,
 		};
-	} catch {
+	} catch (err) {
+		logger.error('fetchPyPICommitActivity failed', err, { package: packageName });
 		return { lastCommitDaysAgo: 365, maintainerActive: false };
 	}
 };
@@ -71,7 +73,8 @@ export const fetchPyPIDownloadStats = async (packageName: string): Promise<NpmDo
 				: 0;
 
 		return { weeklyDownloads, monthlyDownloads, trendPercent };
-	} catch {
+	} catch (err) {
+		logger.error('fetchPyPIDownloadStats failed', err, { package: packageName });
 		return { weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 };
 	}
 };
@@ -109,7 +112,8 @@ export const fetchPyPIPackageInfo = async (packageName: string): Promise<NpmPack
 			homepage: info.home_page,
 			repository: info.project_urls?.Source,
 		};
-	} catch {
+	} catch (err) {
+		logger.error('fetchPyPIPackageInfo failed', err, { package: packageName });
 		return null;
 	}
 };
