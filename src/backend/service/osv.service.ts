@@ -1,4 +1,5 @@
 import type { CVE, Ecosystem } from '@/types';
+import logger from '../util/logger';
 
 const OSV_ECOSYSTEM_MAP: Partial<Record<Ecosystem, string>> = {
 	nodejs: 'npm',
@@ -87,7 +88,9 @@ export const fetchCVEsBatch = async (
 			const cves = result.vulns?.map((v) => parseCVE(v)) ?? [];
 			results.set(pkg.name, cves);
 		});
-	} catch {
+	} catch (err) {
+		logger.error('fetchCVEsBatch failed, falling back to individual', err);
+
 		for (const pkg of packages) {
 			const cves = await fetchCVEs(pkg.name, pkg.ecosystem, pkg.version);
 			results.set(pkg.name, cves);

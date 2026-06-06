@@ -1,5 +1,6 @@
 import type { NpmDownloadStats, NpmPackageInfo } from '@/types';
 import { formatDate } from '@backend/helper';
+import logger from '../util/logger';
 
 export const fetchNpmPackageInfo = async (packageName: string): Promise<NpmPackageInfo | null> => {
 	try {
@@ -35,7 +36,8 @@ export const fetchNpmPackageInfo = async (packageName: string): Promise<NpmPacka
 			homepage: latestMeta.homepage,
 			repository: typeof latestMeta.repository === 'string' ? latestMeta.repository : latestMeta.repository?.url,
 		};
-	} catch {
+	} catch (err) {
+		logger.error('fetchNpmPackageInfo failed', err, { package: packageName });
 		return null;
 	}
 };
@@ -47,27 +49,26 @@ export const fetchNpmDownloadStats = async (packageName: string): Promise<NpmDow
 		}
 		const encoded = packageName.startsWith('@') ? '@' + packageName.slice(1).replace('/', '%2F') : packageName;
 
-		const weekRes = await fetch(`https://api.npmjs.org/downloads/point/last-week/${encoded}`);
-		const weekData = (await weekRes.json()) as any;
-		const weeklyDownloads = weekData.downloads ?? 0;
-
-		const monthRes = await fetch(`https://api.npmjs.org/downloads/point/last-month/${encoded}`);
-		const monthData = (await monthRes.json()) as any;
-		const monthlyDownloads = monthData.downloads ?? 0;
-
 		const threeMonthsAgo = new Date();
 		threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 		const start = formatDate(threeMonthsAgo);
 		const end = formatDate(new Date(threeMonthsAgo.getTime() + 7 * 24 * 60 * 60 * 1000));
 
-		const trendRes = await fetch(`https://api.npmjs.org/downloads/point/${start}:${end}/${encoded}`);
-		const trendData = (await trendRes.json()) as any;
+		const [weekData, monthData, trendData] = (await Promise.all([
+			fetch(`https://api.npmjs.org/downloads/point/last-week/${encoded}`).then((r) => r.json()),
+			fetch(`https://api.npmjs.org/downloads/point/last-month/${encoded}`).then((r) => r.json()),
+			fetch(`https://api.npmjs.org/downloads/point/${start}:${end}/${encoded}`).then((r) => r.json()),
+		])) as any[];
+
+		const weeklyDownloads = weekData.downloads ?? 0;
+		const monthlyDownloads = monthData.downloads ?? 0;
 		const oldWeeklyDownloads = trendData.downloads ?? weeklyDownloads;
 
 		const trendPercent = oldWeeklyDownloads > 0 ? Math.round(((weeklyDownloads - oldWeeklyDownloads) / oldWeeklyDownloads) * 100) : 0;
 
 		return { weeklyDownloads, monthlyDownloads, trendPercent };
-	} catch {
+	} catch (err) {
+		logger.error('fetchNpmDownloadStats failed', err, { package: packageName });
 		return { weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 };
 	}
 };
@@ -115,7 +116,8 @@ export const fetchGithubCommitActivity = async (
 			lastCommitDaysAgo,
 			maintainerActive: lastCommitDaysAgo < 90,
 		};
-	} catch {
+	} catch (err) {
+		logger.error('fetchGithubCommitActivity failed', err, { package: packageName });
 		return { lastCommitDaysAgo: 365, maintainerActive: false };
 	}
 };

@@ -1,7 +1,7 @@
 import type { CVE, Ecosystem, FixStrategy, PackageRisk, RiskLevel, RiskSignals } from '@/types';
 import { fetchGithubCommitActivity, fetchNpmDownloadStats, fetchNpmPackageInfo } from '@backend/service/npm.service';
 import { fetchPyPICommitActivity, fetchPyPIDownloadStats, fetchPyPIPackageInfo } from '@backend/service/pypi.service';
-import { fetchCVEs } from '@backend/service/osv.service';
+import { fetchCVEs, fetchCVEsBatch } from '@backend/service/osv.service';
 import logger from '@backend/util/logger';
 import { getCachedPackage } from '@backend/service/elastic.service';
 import { generateRiskExplanation, suggestAlternative } from './gemini.service';
@@ -71,6 +71,7 @@ export const scanPackage = async (
 	ecosystem: Ecosystem = 'nodejs',
 	env: CloudflareEnv,
 	githubToken?: string,
+	prefetchedCves?: CVE[],
 ): Promise<PackageRisk> => {
 	const cached = await getCachedPackage(name, ecosystem, env).catch(() => null);
 	if (cached) {
@@ -83,7 +84,7 @@ export const scanPackage = async (
 	const isJava = ecosystem === 'java';
 	const isGo = ecosystem === 'go';
 
-	const [pkgInfo, downloadStats, commitActivity, cves] = await Promise.all([
+	const [pkgInfo, downloadStats, commitActivity] = await Promise.all([
 		isNodejs ? fetchNpmPackageInfo(name) : isPython ? fetchPyPIPackageInfo(name) : Promise.resolve(null),
 
 		isNodejs
@@ -97,9 +98,13 @@ export const scanPackage = async (
 			: isPython
 				? fetchPyPICommitActivity(name, githubToken)
 				: Promise.resolve({ lastCommitDaysAgo: 0, maintainerActive: true }),
-
-		fetchCVEs(name, ecosystem, declaredVersion.replace(/^[\^~>=<]/, '')),
 	]);
+
+	const cves = prefetchedCves ?? (await fetchCVEs(name, ecosystem, declaredVersion.replace(/^[\^~>=<]/, '')));
+
+	if (!pkgInfo) logger.warn('pkgInfo null', { package: name, ecosystem });
+	if (downloadStats.weeklyDownloads === 0) logger.warn('weeklyDownloads zero', { package: name });
+	if (commitActivity.lastCommitDaysAgo === 365) logger.warn('commitActivity fallback', { package: name });
 
 	const signals: RiskSignals = {
 		isDeprecated: pkgInfo?.isDeprecated ?? false,
@@ -146,12 +151,23 @@ export const scanAllPackages = async (
 	const BATCH_SIZE = 10;
 	const BATCH_DELAY = 500;
 
+	const packageList = filtered.map(([name, version]) => ({
+		name,
+		ecosystem,
+		version: version.replace(/^[\^~>=<]/, ''),
+	}));
+
+	const cveMap = await fetchCVEsBatch(packageList).catch((err) => {
+		logger.error('fetchCVEsBatch failed, falling back to individual', err);
+		return new Map<string, CVE[]>();
+	});
+
 	for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
 		const batch = filtered.slice(i, i + BATCH_SIZE);
 
 		const batchResults = await Promise.all(
 			batch.map(([name, version]) =>
-				scanPackage(name, version, ecosystem, env, githubToken).catch((err) => {
+				scanPackage(name, version, ecosystem, env, githubToken, cveMap.get(name)).catch((err) => {
 					logger.error('scanPackage failed', err, { package: name, version });
 					return null;
 				}),
