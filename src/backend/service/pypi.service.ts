@@ -1,52 +1,92 @@
-import { NpmDownloadStats, NpmPackageInfo } from '@/types';
+import type { NpmDownloadStats, NpmPackageInfo } from '@/types';
 import logger from '../util/logger';
+
+export const fetchPyPIJson = async (packageName: string): Promise<any | null> => {
+	try {
+		const res = await fetch(`https://pypi.org/pypi/${packageName}/json`);
+		if (!res.ok) {
+			logger.warn('PyPI JSON fetch failed', { package: packageName, status: res.status });
+			return null;
+		}
+		return res.json();
+	} catch (err) {
+		logger.error('fetchPyPIJson threw', err, { package: packageName });
+		return null;
+	}
+};
+
+export const extractGithubRepo = (data: any): { owner: string; repo: string } | null => {
+	const projectUrls = data.info?.project_urls ?? {};
+	const repoUrl =
+		projectUrls['Source'] ??
+		projectUrls['Source Code'] ??
+		projectUrls['Repository'] ??
+		projectUrls['Homepage'] ??
+		data.info?.home_page ??
+		'';
+
+	if (!repoUrl) return null;
+
+	const match = repoUrl.match(/github\.com[/:]([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
+	if (!match) return null;
+
+	const rawRepo = match[2];
+
+	// Low-CPU, direct string adjustment bypassing RegEx compilation
+	const cleanRepo = rawRepo && rawRepo.endsWith('.git') ? rawRepo.slice(0, -4) : rawRepo;
+
+	return { owner: match[1], repo: cleanRepo };
+};
+
+export const fetchGithubLastCommit = async (
+	owner: string,
+	repo: string,
+	token?: string,
+): Promise<{ lastCommitDaysAgo: number; maintainerActive: boolean }> => {
+	const headers: Record<string, string> = {
+		Accept: 'application/vnd.github.v3+json',
+		'User-Agent': 'DepShield/1.0',
+	};
+	if (token) headers['Authorization'] = `Bearer ${token}`;
+
+	const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, { headers });
+	if (!res.ok) {
+		logger.warn('GitHub commit fetch failed', { owner, repo, status: res.status, hasToken: !!token });
+		return { lastCommitDaysAgo: 365, maintainerActive: false };
+	}
+
+	const commits = (await res.json()) as any[];
+	if (!commits.length) {
+		logger.warn('GitHub repo has no commits', { owner, repo });
+		return { lastCommitDaysAgo: 9999, maintainerActive: false };
+	}
+
+	const lastCommitDaysAgo = Math.floor((Date.now() - new Date(commits[0].commit.committer.date).getTime()) / (1000 * 60 * 60 * 24));
+
+	logger.info('GitHub commit fetched', { owner, repo, lastCommitDaysAgo, maintainerActive: lastCommitDaysAgo < 90 });
+
+	return { lastCommitDaysAgo, maintainerActive: lastCommitDaysAgo < 90 };
+};
 
 export const fetchPyPICommitActivity = async (
 	packageName: string,
 	token?: string,
+	knownData?: any,
 ): Promise<{ lastCommitDaysAgo: number; maintainerActive: boolean }> => {
 	try {
-		const res = await fetch(`https://pypi.org/pypi/${packageName}/json`);
-		if (!res.ok) return { lastCommitDaysAgo: 365, maintainerActive: false };
+		const data = knownData ?? (await fetchPyPIJson(packageName));
+		if (!data) {
+			logger.warn('No PyPI data for commit activity', { package: packageName });
+			return { lastCommitDaysAgo: 365, maintainerActive: false };
+		}
 
-		const data = (await res.json()) as any;
-		const projectUrls = data.info?.project_urls ?? {};
+		const githubRepo = extractGithubRepo(data);
+		if (!githubRepo) {
+			logger.warn('No GitHub repo in PyPI metadata', { package: packageName, homePage: data.info?.home_page });
+			return { lastCommitDaysAgo: 365, maintainerActive: false };
+		}
 
-		const repoUrl =
-			projectUrls['Source'] ??
-			projectUrls['Source Code'] ??
-			projectUrls['Repository'] ??
-			projectUrls['Homepage'] ??
-			data.info?.home_page ??
-			'';
-
-		if (!repoUrl) return { lastCommitDaysAgo: 365, maintainerActive: false };
-
-		const githubMatch = repoUrl.match(/github\.com[/:]([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
-		if (!githubMatch) return { lastCommitDaysAgo: 365, maintainerActive: false };
-
-		const [, owner, repo] = githubMatch;
-		const cleanRepo = repo.replace(/\.git$/, '');
-
-		const headers: Record<string, string> = {
-			Accept: 'application/vnd.github.v3+json',
-			'User-Agent': 'DepShield/1.0',
-		};
-		if (token) headers['Authorization'] = `Bearer ${token}`;
-
-		const commitRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepo}/commits?per_page=1`, { headers });
-		if (!commitRes.ok) return { lastCommitDaysAgo: 365, maintainerActive: false };
-
-		const commits = (await commitRes.json()) as any[];
-		if (!commits.length) return { lastCommitDaysAgo: 9999, maintainerActive: false };
-
-		const lastCommitDate = new Date(commits[0].commit.committer.date);
-		const lastCommitDaysAgo = Math.floor((Date.now() - lastCommitDate.getTime()) / (1000 * 60 * 60 * 24));
-
-		return {
-			lastCommitDaysAgo,
-			maintainerActive: lastCommitDaysAgo < 90,
-		};
+		return fetchGithubLastCommit(githubRepo.owner, githubRepo.repo, token);
 	} catch (err) {
 		logger.error('fetchPyPICommitActivity failed', err, { package: packageName });
 		return { lastCommitDaysAgo: 365, maintainerActive: false };
@@ -55,22 +95,22 @@ export const fetchPyPICommitActivity = async (
 
 export const fetchPyPIDownloadStats = async (packageName: string): Promise<NpmDownloadStats> => {
 	try {
-		const weekRes = await fetch(`https://pypistats.org/api/packages/${packageName.toLowerCase()}/recent`);
-		if (!weekRes.ok) return { weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 };
+		const res = await fetch(`https://pypistats.org/api/packages/${packageName.toLowerCase()}/recent`);
+		if (!res.ok) {
+			logger.warn('PyPI download stats fetch failed', { package: packageName, status: res.status });
+			return { weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 };
+		}
 
-		const weekData = (await weekRes.json()) as any;
-		const weeklyDownloads = weekData.data?.last_week ?? 0;
-		const monthlyDownloads = weekData.data?.last_month ?? 0;
+		const data = (await res.json()) as any;
+		const weeklyDownloads = data.data?.last_week ?? 0;
+		const monthlyDownloads = data.data?.last_month ?? 0;
 
-		const overallRes = await fetch(`https://pypistats.org/api/packages/${packageName.toLowerCase()}/overall`);
-		const overallData = (await overallRes.json()) as any;
+		if (weeklyDownloads === 0) {
+			logger.warn('PyPI weekly downloads zero', { package: packageName });
+		}
 
-		const entries = overallData.data ?? [];
-		const recent = entries.slice(-2);
-		const trendPercent =
-			recent.length === 2 && recent[0].downloads > 0
-				? Math.round(((recent[1].downloads - recent[0].downloads) / recent[0].downloads) * 100)
-				: 0;
+		const avgWeekly = monthlyDownloads > 0 ? Math.round(monthlyDownloads / 4.3) : weeklyDownloads;
+		const trendPercent = avgWeekly > 0 ? Math.round(((weeklyDownloads - avgWeekly) / avgWeekly) * 100) : 0;
 
 		return { weeklyDownloads, monthlyDownloads, trendPercent };
 	} catch (err) {
@@ -79,25 +119,38 @@ export const fetchPyPIDownloadStats = async (packageName: string): Promise<NpmDo
 	}
 };
 
-export const fetchPyPIPackageInfo = async (packageName: string): Promise<NpmPackageInfo | null> => {
+export const fetchPyPIPackageInfo = async (packageName: string, knownData?: any): Promise<NpmPackageInfo | null> => {
 	try {
-		const res = await fetch(`https://pypi.org/pypi/${packageName}/json`);
-		if (!res.ok) return null;
+		const data = knownData ?? (await fetchPyPIJson(packageName));
+		if (!data) {
+			logger.warn('No PyPI data for package info', { package: packageName });
+			return null;
+		}
 
-		const data = (await res.json()) as any;
 		const info = data.info;
-
-		const releases = data.releases ?? {};
-		const allDates = Object.values(releases)
-			.flat()
-			.map((r: any) => r.upload_time)
-			.filter(Boolean)
-			.sort();
-
-		const lastPublishedAt = allDates[allDates.length - 1] ?? '';
+		const latestFiles = data.urls ?? [];
+		const lastPublishedAt = latestFiles[0]?.upload_time ?? '';
 		const lastPublishedDaysAgo = lastPublishedAt
 			? Math.floor((Date.now() - new Date(lastPublishedAt).getTime()) / (1000 * 60 * 60 * 24))
 			: 9999;
+
+		const githubRepo = extractGithubRepo(data);
+
+		if (!githubRepo) {
+			logger.warn('No GitHub repo in PyPI package info', {
+				package: packageName,
+				homePage: info?.home_page,
+				projectUrls: Object.keys(info?.project_urls ?? {}),
+			});
+		}
+
+		logger.info('PyPI package info fetched', {
+			package: packageName,
+			version: info?.version,
+			lastPublishedDaysAgo,
+			hasGithubRepo: !!githubRepo,
+			isDeprecated: info.classifiers?.some((c: string) => c.includes('Inactive') || c.includes('Abandoned')) ?? false,
+		});
 
 		return {
 			name: packageName,
@@ -110,7 +163,7 @@ export const fetchPyPIPackageInfo = async (packageName: string): Promise<NpmPack
 			maintainerCount: info.maintainer ? 1 : 0,
 			license: info.license,
 			homepage: info.home_page,
-			repository: info.project_urls?.Source,
+			repository: githubRepo ? `https://github.com/${githubRepo.owner}/${githubRepo.repo}` : undefined,
 		};
 	} catch (err) {
 		logger.error('fetchPyPIPackageInfo failed', err, { package: packageName });

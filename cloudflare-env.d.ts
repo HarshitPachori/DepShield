@@ -43,6 +43,8 @@ interface CloudflareEnv extends __BaseEnv_CloudflareEnv {
   GOOGLE_CLOUD_LOCATION: string
   GEMINI_API_KEY: string
   GROQ_API_KEY: string
+
+  NPM_TOKEN: string
 }
 type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
