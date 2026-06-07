@@ -4,23 +4,16 @@ import logger from '@backend/util/logger';
 export const SIGNALS_INDEX = 'depshield-signals';
 export const CACHE_INDEX = 'depshield-cache';
 
-const indexExists = async (indexName: string, env: CloudflareEnv): Promise<boolean> => {
-	const base = env.ELASTIC_URL ?? 'http://localhost:9200';
-	const apiKey = env.ELASTIC_API_KEY;
-	const headers: Record<string, string> = {};
-	if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
-
-	const res = await fetch(`${base}/${indexName}`, { method: 'GET', headers });
-	return res.status === 200;
-};
+let indicesEnsured = false;
 
 const elasticFetch = async (path: string, env: CloudflareEnv, body?: unknown, method?: string): Promise<any> => {
 	const base = env.ELASTIC_URL ?? 'http://localhost:9200';
 	const apiKey = env.ELASTIC_API_KEY;
 
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json',
-	};
+	if (!apiKey) logger.warn('No Elastic API key configured');
+	if (!env.ELASTIC_URL) logger.warn('No Elastic URL configured, using localhost');
+
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
 
 	const res = await fetch(`${base}${path}`, {
@@ -30,9 +23,8 @@ const elasticFetch = async (path: string, env: CloudflareEnv, body?: unknown, me
 	});
 
 	if (!res.ok && res.status !== 404) {
-		const text = await res.text();
-		logger.error(`Elastic error ${res.status}: ${text}`);
-		throw new Error(`Elastic error ${res.status}: ${text}`);
+		logger.error('Elastic request failed', undefined, { status: res.status, path, method: method ?? (body ? 'POST' : 'GET') });
+		throw new Error(`Elastic error ${res.status}`);
 	}
 
 	return res.json();
@@ -42,81 +34,113 @@ const elasticBulk = async (lines: string[], env: CloudflareEnv): Promise<void> =
 	const base = env.ELASTIC_URL ?? 'http://localhost:9200';
 	const apiKey = env.ELASTIC_API_KEY;
 
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/x-ndjson',
-	};
+	const headers: Record<string, string> = { 'Content-Type': 'application/x-ndjson' };
 	if (apiKey) headers['Authorization'] = `ApiKey ${apiKey}`;
 
-	await fetch(`${base}/_bulk`, {
+	const res = await fetch(`${base}/_bulk`, {
 		method: 'POST',
 		headers,
 		body: lines.join('\n') + '\n',
 	});
+
+	if (!res.ok) {
+		logger.error('Elastic bulk index failed', undefined, { status: res.status, lineCount: lines.length });
+	} else {
+		logger.info('Elastic bulk complete', { documents: lines.length / 2 });
+	}
 };
 
 export const createIndices = async (env: CloudflareEnv): Promise<void> => {
-	const signalsCheck = await indexExists(SIGNALS_INDEX, env);
-	if (!signalsCheck) {
-		await elasticFetch(
-			`/${SIGNALS_INDEX}`,
-			env,
-			{
-				mappings: {
-					properties: {
-						package_name: { type: 'keyword' },
-						ecosystem: { type: 'keyword' },
-						signal_type: { type: 'keyword' },
-						signal_text: { type: 'text', analyzer: 'english' },
-						source: { type: 'keyword' },
-						date: { type: 'date' },
-						sentiment_score: { type: 'float' },
-						weekly_downloads: { type: 'long' },
-						is_deprecated: { type: 'boolean' },
-						alternatives: { type: 'keyword' },
-					},
-				},
-			},
-			'PUT',
-		);
-		logger.info(`Index ${SIGNALS_INDEX} created`);
-	}
+	if (indicesEnsured) return;
 
-	const cacheCheck = await indexExists(CACHE_INDEX, env);
-	if (!cacheCheck) {
-		await elasticFetch(
-			`/${CACHE_INDEX}`,
-			env,
-			{
-				mappings: {
-					properties: {
-						package_name: { type: 'keyword' },
-						ecosystem: { type: 'keyword' },
-						version: { type: 'keyword' },
-						risk_score: { type: 'integer' },
-						risk_level: { type: 'keyword' },
-						fix_strategy: { type: 'keyword' },
-						cve_count: { type: 'integer' },
-						cves_json: { type: 'text' },
-						is_deprecated: { type: 'boolean' },
-						last_commit_days_ago: { type: 'integer' },
-						download_trend_percent: { type: 'integer' },
-						maintainer_active: { type: 'boolean' },
-						weekly_downloads: { type: 'long' },
-						alternatives: { type: 'keyword' },
-						explanation: { type: 'text' },
-						cached_at: { type: 'date' },
-						expires_at: { type: 'date' },
+	logger.info('Checking Elastic indices');
+
+	const [signalsRes, cacheRes] = await Promise.all([
+		fetch(`${env.ELASTIC_URL ?? 'http://localhost:9200'}/${SIGNALS_INDEX}`, {
+			method: 'HEAD',
+			headers: env.ELASTIC_API_KEY ? { Authorization: `ApiKey ${env.ELASTIC_API_KEY}` } : {},
+		}),
+		fetch(`${env.ELASTIC_URL ?? 'http://localhost:9200'}/${CACHE_INDEX}`, {
+			method: 'HEAD',
+			headers: env.ELASTIC_API_KEY ? { Authorization: `ApiKey ${env.ELASTIC_API_KEY}` } : {},
+		}),
+	]);
+
+	logger.info('Elastic index check', {
+		signalsExists: signalsRes.ok,
+		cacheExists: cacheRes.ok,
+		signalsStatus: signalsRes.status,
+		cacheStatus: cacheRes.status,
+	});
+
+	await Promise.all([
+		signalsRes.ok
+			? Promise.resolve()
+			: elasticFetch(
+					`/${SIGNALS_INDEX}`,
+					env,
+					{
+						mappings: {
+							properties: {
+								package_name: { type: 'keyword' },
+								ecosystem: { type: 'keyword' },
+								signal_type: { type: 'keyword' },
+								signal_text: { type: 'text', analyzer: 'english' },
+								source: { type: 'keyword' },
+								date: { type: 'date' },
+								sentiment_score: { type: 'float' },
+								weekly_downloads: { type: 'long' },
+								is_deprecated: { type: 'boolean' },
+								alternatives: { type: 'keyword' },
+							},
+						},
 					},
-				},
-			},
-			'PUT',
-		);
-		logger.info(`Index ${CACHE_INDEX} created`);
-	}
+					'PUT',
+				).then(() => logger.info(`Index ${SIGNALS_INDEX} created`)),
+
+		cacheRes.ok
+			? Promise.resolve()
+			: elasticFetch(
+					`/${CACHE_INDEX}`,
+					env,
+					{
+						mappings: {
+							properties: {
+								package_name: { type: 'keyword' },
+								ecosystem: { type: 'keyword' },
+								version: { type: 'keyword' },
+								risk_score: { type: 'integer' },
+								risk_level: { type: 'keyword' },
+								fix_strategy: { type: 'keyword' },
+								cve_count: { type: 'integer' },
+								cves_json: { type: 'text' },
+								is_deprecated: { type: 'boolean' },
+								last_commit_days_ago: { type: 'integer' },
+								download_trend_percent: { type: 'integer' },
+								maintainer_active: { type: 'boolean' },
+								weekly_downloads: { type: 'long' },
+								alternatives: { type: 'keyword' },
+								explanation: { type: 'text' },
+								cached_at: { type: 'date' },
+								expires_at: { type: 'date' },
+							},
+						},
+					},
+					'PUT',
+				).then(() => logger.info(`Index ${CACHE_INDEX} created`)),
+	]);
+
+	indicesEnsured = true;
+	logger.info('Elastic indices ready');
 };
 
 export const indexScanResults = async (results: PackageRisk[], env: CloudflareEnv, ttlHours: number = 24): Promise<void> => {
-	if (!results.length) return;
+	if (!results.length) {
+		logger.warn('indexScanResults called with empty results');
+		return;
+	}
+
+	logger.info('Indexing scan results to Elastic', { count: results.length, ttlHours });
 
 	await createIndices(env);
 
@@ -147,22 +171,26 @@ export const indexScanResults = async (results: PackageRisk[], env: CloudflareEn
 	]);
 
 	await elasticBulk(lines, env);
-	logger.info('Indexed scan results to Elastic', { count: results.length });
 };
 
 export const getCachedPackage = async (name: string, ecosystem: string, env: CloudflareEnv): Promise<PackageRisk | null> => {
 	try {
-		const data = await elasticFetch(`/${CACHE_INDEX}/_search`, env, {
-			query: {
-				bool: {
-					must: [{ term: { package_name: name } }, { term: { ecosystem } }, { range: { expires_at: { gte: new Date().toISOString() } } }],
-				},
-			},
-			size: 1,
-		});
+		const docId = `${ecosystem}:${name}`;
+		const data = await elasticFetch(`/${CACHE_INDEX}/_doc/${encodeURIComponent(docId)}`, env);
 
-		const hit = data?.hits?.hits?.[0]?._source;
-		if (!hit) return null;
+		if (data?.status === 404 || !data?._source) {
+			logger.debug('Elastic cache miss', { package: name, ecosystem });
+			return null;
+		}
+
+		const hit = data._source;
+
+		if (hit.expires_at && new Date(hit.expires_at) < new Date()) {
+			logger.info('Elastic cache expired', { package: name, ecosystem, expiredAt: hit.expires_at });
+			return null;
+		}
+
+		logger.info('Elastic cache hit', { package: name, ecosystem, riskLevel: hit.risk_level });
 
 		return {
 			name: hit.package_name,
@@ -184,7 +212,8 @@ export const getCachedPackage = async (name: string, ecosystem: string, env: Clo
 				communitySignal: undefined,
 			},
 		} as PackageRisk;
-	} catch {
+	} catch (err) {
+		logger.error('getCachedPackage failed', err instanceof Error ? err : undefined, { package: name, ecosystem });
 		return null;
 	}
 };
@@ -205,7 +234,8 @@ export const searchPackageSignals = async (
 			sort: [{ date: { order: 'desc' } }],
 		});
 		return data?.hits?.hits?.map((h: any) => h._source).filter(Boolean) ?? [];
-	} catch {
+	} catch (err) {
+		logger.error('searchPackageSignals failed', err instanceof Error ? err : undefined, { package: packageName });
 		return [];
 	}
 };
@@ -222,7 +252,8 @@ export const searchAlternatives = async (packageName: string, ecosystem: string 
 		});
 		const alts = data?.hits?.hits?.map((h: any) => h._source?.alternatives ?? []).flat() ?? [];
 		return [...new Set(alts)] as string[];
-	} catch {
+	} catch (err) {
+		logger.error('searchAlternatives failed', err instanceof Error ? err : undefined, { package: packageName });
 		return [];
 	}
 };
@@ -249,7 +280,8 @@ export const searchMigrationGuides = async (packageName: string, env: Cloudflare
 				.filter(Boolean)
 				.join(' ') ?? ''
 		);
-	} catch {
+	} catch (err) {
+		logger.error('searchMigrationGuides failed', err instanceof Error ? err : undefined, { package: packageName });
 		return '';
 	}
 };
@@ -259,6 +291,7 @@ export const indexPackageSignal = async (signal: PackageSignal, env: CloudflareE
 };
 
 export const bulkIndexSignals = async (signals: PackageSignal[], env: CloudflareEnv): Promise<void> => {
+	if (!signals.length) return;
 	const lines = signals.flatMap((doc) => [JSON.stringify({ index: { _index: SIGNALS_INDEX } }), JSON.stringify(doc)]);
 	await elasticBulk(lines, env);
 };

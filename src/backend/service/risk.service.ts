@@ -1,15 +1,13 @@
-import type { CVE, Ecosystem, FixStrategy, PackageRisk, RiskLevel, RiskSignals } from '@/types';
-import { fetchGithubCommitActivity, fetchNpmDownloadStats, fetchNpmPackageInfo } from '@backend/service/npm.service';
-import { fetchPyPICommitActivity, fetchPyPIDownloadStats, fetchPyPIPackageInfo } from '@backend/service/pypi.service';
-import { fetchCVEs, fetchCVEsBatch } from '@backend/service/osv.service';
+import type { CVE, Ecosystem, FixStrategy, NpmDownloadStats, PackageRisk, RiskLevel, RiskSignals } from '@/types';
+import { fetchGithubCommitActivity, fetchNpmDownloadStatsBatch, fetchNpmPackageInfo } from '@backend/service/npm.service';
+import { fetchPyPICommitActivity, fetchPyPIDownloadStats, fetchPyPIJson, fetchPyPIPackageInfo } from '@backend/service/pypi.service';
+import { fetchCVEsBatch } from '@backend/service/osv.service';
 import logger from '@backend/util/logger';
 import { getCachedPackage } from '@backend/service/elastic.service';
-import { generateRiskExplanation, suggestAlternative } from './gemini.service';
 
 export const calculateRiskScore = (signals: RiskSignals): number => {
 	let score = 0;
 
-	// Abandonment signals
 	if (signals.isDeprecated) score += 40;
 	if (signals.lastCommitDaysAgo > 730) score += 25;
 	else if (signals.lastCommitDaysAgo > 365) score += 15;
@@ -20,7 +18,6 @@ export const calculateRiskScore = (signals: RiskSignals): number => {
 	else if (signals.downloadTrendPercent < -10) score += 6;
 	if (!signals.maintainerActive) score += 10;
 
-	// CVE count based - severity data unreliable
 	if (signals.openCveCount >= 20) score += 35;
 	else if (signals.openCveCount >= 10) score += 28;
 	else if (signals.openCveCount >= 5) score += 20;
@@ -72,6 +69,7 @@ export const scanPackage = async (
 	env: CloudflareEnv,
 	githubToken?: string,
 	prefetchedCves?: CVE[],
+	prefetchedDownloadStats?: NpmDownloadStats,
 ): Promise<PackageRisk> => {
 	const cached = await getCachedPackage(name, ecosystem, env).catch(() => null);
 	if (cached) {
@@ -79,48 +77,70 @@ export const scanPackage = async (
 		return cached;
 	}
 
+	logger.info('Scanning package', { package: name, ecosystem, hasGithubToken: !!githubToken });
+
 	const isNodejs = ecosystem === 'nodejs';
 	const isPython = ecosystem === 'python';
-	const isJava = ecosystem === 'java';
-	const isGo = ecosystem === 'go';
 
-	const [pkgInfo, downloadStats, commitActivity] = await Promise.all([
-		isNodejs ? fetchNpmPackageInfo(name) : isPython ? fetchPyPIPackageInfo(name) : Promise.resolve(null),
+	let pkgInfo: Awaited<ReturnType<typeof fetchNpmPackageInfo>> = null;
+	let downloadStats = { weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 };
+	let commitActivity = { lastCommitDaysAgo: 0, maintainerActive: true };
 
-		isNodejs
-			? fetchNpmDownloadStats(name)
-			: isPython
-				? fetchPyPIDownloadStats(name)
-				: Promise.resolve({ weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 }),
+	if (isNodejs) {
+		pkgInfo = await fetchNpmPackageInfo(name, env.NPM_TOKEN);
 
-		isNodejs
-			? fetchGithubCommitActivity(name, githubToken)
-			: isPython
-				? fetchPyPICommitActivity(name, githubToken)
-				: Promise.resolve({ lastCommitDaysAgo: 0, maintainerActive: true }),
-	]);
+		logger.debug('npm package info fetched', {
+			package: name,
+			version: pkgInfo?.version,
+			isDeprecated: pkgInfo?.isDeprecated,
+			repository: pkgInfo?.repository ?? 'none',
+		});
+		downloadStats = prefetchedDownloadStats ?? { weeklyDownloads: 0, monthlyDownloads: 0, trendPercent: 0 };
+		commitActivity = await fetchGithubCommitActivity(name, githubToken, pkgInfo?.repository, env.NPM_TOKEN);
+	} else if (isPython) {
+		const [pypiData, pypiStats] = await Promise.all([fetchPyPIJson(name), fetchPyPIDownloadStats(name)]);
 
-	const cves = prefetchedCves ?? (await fetchCVEs(name, ecosystem, declaredVersion.replace(/^[\^~>=<]/, '')));
+		logger.debug('PyPI data fetched', { package: name, hasData: !!pypiData });
+
+		[pkgInfo, commitActivity] = await Promise.all([
+			fetchPyPIPackageInfo(name, pypiData),
+			fetchPyPICommitActivity(name, githubToken, pypiData),
+		]);
+
+		downloadStats = pypiStats;
+	} else {
+		logger.warn('Unsupported ecosystem in scanPackage', { package: name, ecosystem });
+	}
 
 	if (!pkgInfo) logger.warn('pkgInfo null', { package: name, ecosystem });
 	if (downloadStats.weeklyDownloads === 0) logger.warn('weeklyDownloads zero', { package: name });
 	if (commitActivity.lastCommitDaysAgo === 365) logger.warn('commitActivity fallback', { package: name });
 
+	const cves = prefetchedCves ?? [];
 	const signals: RiskSignals = {
 		isDeprecated: pkgInfo?.isDeprecated ?? false,
-		lastCommitDaysAgo: commitActivity?.lastCommitDaysAgo ?? 0,
-		downloadTrendPercent: downloadStats?.trendPercent ?? 0,
+		lastCommitDaysAgo: commitActivity.lastCommitDaysAgo,
+		downloadTrendPercent: downloadStats.trendPercent,
 		openCveCount: cves.length,
-		maintainerActive: commitActivity?.maintainerActive ?? true,
-		weeklyDownloads: downloadStats?.weeklyDownloads ?? 0,
+		maintainerActive: commitActivity.maintainerActive,
+		weeklyDownloads: downloadStats.weeklyDownloads,
 		communitySignal: pkgInfo?.deprecationMessage,
 	};
 
 	const riskScore = calculateRiskScore(signals);
 	const riskLevel = getRiskLevel(riskScore);
 	const fixStrategy = determineFixStrategy(signals, cves);
-
 	const explanation = generateExplanation(name, signals, riskLevel);
+
+	logger.info('Package scan complete', {
+		package: name,
+		riskLevel,
+		riskScore,
+		lastCommitDaysAgo: commitActivity.lastCommitDaysAgo,
+		weeklyDownloads: downloadStats.weeklyDownloads,
+		cveCount: cves.length,
+		isDeprecated: pkgInfo?.isDeprecated ?? false,
+	});
 
 	return {
 		name,
@@ -141,40 +161,69 @@ export const scanAllPackages = async (
 	env: CloudflareEnv,
 	githubToken?: string,
 	onProgress?: (scanned: number, total: number) => void,
-	geminiApiKey?: string,
-	groqApiKey?: string,
 ): Promise<PackageRisk[]> => {
 	const filtered = Object.entries(deps).filter(([name]) => !name.startsWith('@types/'));
-
 	const total = filtered.length;
 	const results: PackageRisk[] = [];
-	const BATCH_SIZE = 10;
-	const BATCH_DELAY = 500;
+	const BATCH_SIZE = 5;
+	const BATCH_DELAY = 300;
 
-	const packageList = filtered.map(([name, version]) => ({
-		name,
-		ecosystem,
-		version: version.replace(/^[\^~>=<]/, ''),
-	}));
+	logger.info('scanAllPackages started', { total, ecosystem, hasGithubToken: !!githubToken });
 
-	const cveMap = await fetchCVEsBatch(packageList).catch((err) => {
-		logger.error('fetchCVEsBatch failed, falling back to individual', err);
-		return new Map<string, CVE[]>();
+	const packageList = filtered.map(([name, version]) => {
+		let startIdx = 0;
+		while (
+			startIdx < version.length &&
+			(version[startIdx] === '^' ||
+				version[startIdx] === '~' ||
+				version[startIdx] === '>' ||
+				version[startIdx] === '=' ||
+				version[startIdx] === '<')
+		) {
+			startIdx++;
+		}
+
+		return {
+			name,
+			ecosystem,
+			version: startIdx > 0 ? version.slice(startIdx) : version,
+		};
+	});
+
+	const [cveMap, downloadMap] = await Promise.all([
+		fetchCVEsBatch(packageList).catch((err) => {
+			logger.error('fetchCVEsBatch failed', err);
+			return new Map<string, CVE[]>();
+		}),
+		ecosystem === 'nodejs'
+			? fetchNpmDownloadStatsBatch(
+					filtered.map(([name]) => name),
+					env,
+				).catch((err) => {
+					logger.error('fetchNpmDownloadStatsBatch failed', err);
+					return new Map<string, NpmDownloadStats>();
+				})
+			: Promise.resolve(new Map<string, NpmDownloadStats>()),
+	]);
+
+	logger.info('CVE batch complete', { packages: packageList.length, withCves: [...cveMap.values()].filter((v) => v.length > 0).length });
+	logger.info('Downloads batch complete', {
+		packages: filtered.length,
+		withData: [...downloadMap.values()].filter((v) => v.weeklyDownloads > 0).length,
 	});
 
 	for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
 		const batch = filtered.slice(i, i + BATCH_SIZE);
 
-		const batchResults = await Promise.all(
-			batch.map(([name, version]) =>
-				scanPackage(name, version, ecosystem, env, githubToken, cveMap.get(name)).catch((err) => {
-					logger.error('scanPackage failed', err, { package: name, version });
-					return null;
-				}),
-			),
-		);
+		logger.info('Processing batch', { batchStart: i, batchSize: batch.length, total });
 
-		for (const result of batchResults) {
+		for (const [name, version] of batch) {
+			const result = await scanPackage(name, version, ecosystem, env, githubToken, cveMap.get(name) ?? [], downloadMap.get(name)).catch(
+				(err) => {
+					logger.error('scanPackage failed', err, { package: name });
+					return null;
+				},
+			);
 			if (result) results.push(result);
 		}
 
@@ -185,42 +234,6 @@ export const scanAllPackages = async (
 		}
 	}
 
-	// if (geminiApiKey || groqApiKey) {
-	// 	const highRisk = results.filter((r) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH' || r.riskLevel === 'MEDIUM');
-
-	// 	for (const pkg of highRisk) {
-	// 		const idx = results.findIndex((r) => r.name === pkg.name);
-	// 		if (idx === -1) continue;
-
-	// 		try {
-	// 			const geminiExplanation = await generateRiskExplanation(
-	// 				pkg.name,
-	// 				pkg.ecosystem,
-	// 				pkg.signals,
-	// 				pkg.cves,
-	// 				geminiApiKey,
-	// 				groqApiKey,
-	// 			).catch(() => '');
-	// 			// await new Promise((resolve) => setTimeout(resolve, 2000));
-	// 			const geminiAlternative =
-	// 				pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365
-	// 					? await suggestAlternative(pkg.name, pkg.ecosystem, pkg.signals.isDeprecated, geminiApiKey, groqApiKey).catch(() => null)
-	// 					: null;
-
-	// 			if (geminiExplanation) results[idx].explanation = geminiExplanation;
-	// 			if (geminiAlternative) {
-	// 				results[idx].alternative = geminiAlternative.name;
-	// 				results[idx].alternativeReason = geminiAlternative.reason;
-	// 			}
-
-	// 			logger.info('Gemini enriched', { package: pkg.name, riskLevel: pkg.riskLevel });
-	// 		} catch (err) {
-	// 			logger.error('Gemini failed for package', err, { package: pkg.name });
-	// 		}
-
-	// 		await new Promise((resolve) => setTimeout(resolve, 1000));
-	// 	}
-	// }
-
+	logger.info('scanAllPackages complete', { total, scanned: results.length });
 	return results.sort((a, b) => b.riskScore - a.riskScore);
 };

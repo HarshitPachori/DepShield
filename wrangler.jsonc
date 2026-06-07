@@ -51,13 +51,15 @@
 				"queue": "depshield-scan-queue",
 				"max_batch_size": 1,
 				"max_retries": 3,
+				"max_concurrency": 1,
 			},
 			{
 				"queue": "depshield-migration-queue",
 				"max_batch_size": 1,
 				"max_retries": 3,
+				"max_concurrency": 1,
 			},
 		],
 	},
-	"vars": {  "CLIENT_BASE_URI": "https://depshield.hp3.workers.dev" }
+	"vars": { "CLIENT_BASE_URI": "https://depshield.hp3.workers.dev" },
 }
