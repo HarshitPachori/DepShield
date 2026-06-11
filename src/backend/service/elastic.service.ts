@@ -729,9 +729,20 @@ export const searchScans = async (query: string, filters: { ecosystem?: string; 
 	try {
 		const must: any[] = [
 			{
-				multi_match: {
-					query,
-					fields: ['repo_url', 'top_risky_packages.name', 'ecosystem'],
+				bool: {
+					should: [
+						{ match: { repo_url: query } },
+						{ match: { ecosystem: query } },
+						{
+							nested: {
+								path: 'top_risky_packages',
+								query: {
+									match: { 'top_risky_packages.name': query },
+								},
+							},
+						},
+					],
+					minimum_should_match: 1,
 				},
 			},
 		];
@@ -739,7 +750,7 @@ export const searchScans = async (query: string, filters: { ecosystem?: string; 
 		if (filters.ecosystem) must.push({ term: { ecosystem: filters.ecosystem } });
 		if (filters.minRisk) must.push({ range: { avg_risk_score: { gte: filters.minRisk === 'HIGH' ? 45 : 70 } } });
 
-		const data = await elasticFetch('/depshield-repo-scans/_search', env, {
+		const data = await elasticFetch(`/${REPO_SCANS_INDEX}/_search`, env, {
 			query: { bool: { must } },
 			size: 20,
 			sort: [{ avg_risk_score: { order: 'desc' } }],
@@ -748,6 +759,73 @@ export const searchScans = async (query: string, filters: { ecosystem?: string; 
 		return data?.hits?.hits?.map((h: any) => h._source) ?? [];
 	} catch (err) {
 		logger.error('searchScans failed', err);
+		return [];
+	}
+};
+export const getCommunityMigrationContext = async (
+	packageName: string,
+	env: CloudflareEnv,
+): Promise<{ topAlternative: string | null; migrationCount: number; confidence: number }> => {
+	try {
+		const data = await elasticFetch(`/${SIGNALS_INDEX}/_search`, env, {
+			query: {
+				bool: {
+					must: [{ term: { package_name: packageName } }, { term: { signal_type: 'migration' } }],
+				},
+			},
+			size: 0,
+			aggs: {
+				top_alternatives: {
+					terms: { field: 'alternatives', size: 5 },
+				},
+			},
+		});
+
+		const buckets = data?.aggregations?.top_alternatives?.buckets ?? [];
+		const topBucket = buckets[0];
+
+		return {
+			topAlternative: topBucket?.key ?? null,
+			migrationCount: topBucket?.doc_count ?? 0,
+			confidence: Math.min(0.95, 0.5 + (topBucket?.doc_count ?? 0) * 0.1),
+		};
+	} catch (err) {
+		logger.error('getCommunityMigrationContext failed', err, { package: packageName });
+		return { topAlternative: null, migrationCount: 0, confidence: 0 };
+	}
+};
+
+export const findCoRiskyPackages = async (packageName: string, env: CloudflareEnv): Promise<string[]> => {
+	try {
+		const data = await elasticFetch(`/${REPO_SCANS_INDEX}/_search`, env, {
+			query: {
+				nested: {
+					path: 'top_risky_packages',
+					query: {
+						term: { 'top_risky_packages.name': packageName },
+					},
+				},
+			},
+			size: 0,
+			aggs: {
+				co_risky: {
+					nested: { path: 'top_risky_packages' },
+					aggs: {
+						other_packages: {
+							terms: {
+								field: 'top_risky_packages.name',
+								size: 10,
+								exclude: [packageName],
+							},
+						},
+					},
+				},
+			},
+		});
+
+		return data?.aggregations?.co_risky?.other_packages?.buckets?.map((b: any) => b.key).filter(Boolean) ?? [];
+	} catch (err) {
+		logger.error('findCoRiskyPackages failed', err, { package: packageName });
 		return [];
 	}
 };

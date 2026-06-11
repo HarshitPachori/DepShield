@@ -2,6 +2,7 @@ import { getGoogleAccessToken, parseGitlabUrl } from '@backend/helper';
 import logger from '@backend/util/logger';
 import type { PackageSignal } from './elastic.service';
 import {
+	getCommunityMigrationContext,
 	indexPackageSignal,
 	queryDeprecationStatus,
 	queryMigrationSignals,
@@ -518,6 +519,12 @@ export const createGitHubPR = async (
 			);
 		}
 
+		const communityContext = await getCommunityMigrationContext(from_pkg, env).catch(() => null);
+		const communityLine = communityContext
+			? communityContext?.migrationCount > 0
+				? `\n> 💡 **Community insight:** ${communityContext.migrationCount} other projects have migrated from \`${from_pkg}\` to \`${communityContext.topAlternative}\` based on DepShield community data.\n`
+				: ''
+			: '';
 		const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
 			method: 'POST',
 			headers: {
@@ -538,6 +545,7 @@ export const createGitHubPR = async (
 - Updated all imports in source files
 
 ### Why This Change
+${communityLine ?? ''}
 - \`${from_pkg}\` is deprecated/unmaintained
 - \`${to_pkg}\` is the recommended community replacement
 - Reduces security vulnerabilities
@@ -784,6 +792,13 @@ export const createGitLabMR = async (
 			);
 		}
 
+		const communityContext = await getCommunityMigrationContext(from_pkg, env).catch(() => null);
+		const communityLine = communityContext
+			? communityContext?.migrationCount > 0
+				? `\n> 💡 **Community insight:** ${communityContext.migrationCount} other projects have migrated from \`${from_pkg}\` to \`${communityContext.topAlternative}\` based on DepShield community data.\n`
+				: ''
+			: '';
+
 		const mrRes = await fetch(`https://gitlab.com/api/v4/projects/${projectId}/merge_requests`, {
 			method: 'POST',
 			headers: {
@@ -804,6 +819,7 @@ export const createGitLabMR = async (
 - Updated all imports in source files
 
 ### Why This Change
+${communityLine ?? ''}
 - \`${from_pkg}\` is deprecated/unmaintained
 - \`${to_pkg}\` is the recommended community replacement
 - Reduces security vulnerabilities

@@ -4,7 +4,13 @@ import { detectEcosystem, parseDependencies } from '@/backend/service/ecosystem.
 import { generateRiskExplanation, suggestAlternative } from '@/backend/service/gemini.service';
 import { scanAllPackages } from '@/backend/service/risk.service';
 import type { Ecosystem, PackageRisk } from '@/types';
-import { createIndices, indexRepoScan, indexScanResults } from '@backend/service/elastic.service';
+import {
+	createIndices,
+	getCommunityMigrationContext,
+	indexPackageSignal,
+	indexRepoScan,
+	indexScanResults,
+} from '@backend/service/elastic.service';
 import logger from '@backend/util/logger';
 import { eq } from 'drizzle-orm';
 import { getGoogleAccessToken, parseGithubUrl, parseGitlabUrl } from '../helper';
@@ -187,6 +193,12 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 		try {
 			const needsAlternative = pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365;
 
+			const communityContext = await getCommunityMigrationContext(pkg.name, env).catch(() => ({
+				topAlternative: null,
+				migrationCount: 0,
+				confidence: 0,
+			}));
+
 			const [explanation, alternative] = await Promise.all([
 				generateRiskExplanation(
 					pkg.name,
@@ -208,6 +220,7 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 							env.GCP_SERVICE_ACCOUNT,
 							env.GROQ_API_KEY,
 							env.GOOGLE_CLOUD_PROJECT_ID,
+							communityContext,
 						).catch((err) => {
 							logger.error('suggestAlternative failed', err, { package: pkg.name });
 							return null;
@@ -690,6 +703,22 @@ Report the PR/MR URL when done.`,
 		const prUrlMatch = raw.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
 		const mrUrlMatch = raw.match(/https:\/\/gitlab\.com\/[^\s"']+\/-\/merge_requests\/\d+/);
 		const prUrl = prUrlMatch?.[0] ?? mrUrlMatch?.[0];
+
+		if (prUrl) {
+			await indexPackageSignal(
+				{
+					package_name: pkg.name,
+					ecosystem: pkg.ecosystem,
+					signal_type: 'migration',
+					signal_text: `Successfully migrated from ${pkg.name} to ${toPackage} via automated PR`,
+					source: 'depshield-agent',
+					date: new Date().toISOString(),
+					sentiment_score: 0.9,
+					alternatives: [toPackage],
+				},
+				env,
+			).catch(() => {});
+		}
 
 		const db = getDbInstance(env.DB);
 		const row = await db.select().from(scanResults).where(eq(scanResults.jobId, jobId)).limit(1);

@@ -173,15 +173,21 @@ export const suggestAlternative = async (
 	serviceAccountJson?: string,
 	groqApiKey?: string,
 	projectId?: string,
+	communityContext?: { topAlternative: string | null; migrationCount: number; confidence: number },
 ): Promise<{ name: string; reason: string } | null> => {
 	if (!serviceAccountJson && !groqApiKey) {
 		logger.warn('No AI keys configured for alternative suggestion', { package: packageName });
 		return null;
 	}
+	const communityHint =
+		communityContext?.topAlternative && communityContext.migrationCount > 0
+			? `Community data: ${communityContext.migrationCount} projects have migrated from "${packageName}" to "${communityContext.topAlternative}".`
+			: '';
 
 	const prompt = `You are a Node.js expert. Suggest the single best replacement package for "${packageName}" in ${ecosystem}.
 
 ${isDeprecated ? `${packageName} is officially deprecated.` : `${packageName} is abandoned/unmaintained.`}
+${communityHint}
 
 Respond with ONLY a JSON object in this exact format, no other text. Do not use em dashes:
 {"name": "package-name", "reason": "one sentence why it is the best replacement"}`;

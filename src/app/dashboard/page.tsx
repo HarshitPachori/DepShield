@@ -38,6 +38,32 @@ interface LeaderboardItem {
 	affected_repos: number;
 }
 
+interface SearchResult {
+	job_id: string;
+	repo_url: string;
+	ecosystem: string;
+	total_packages: number;
+	avg_risk_score: number;
+	scanned_at: string;
+	critical_count: number;
+	high_count: number;
+}
+
+interface CoRiskyResponse {
+	success: boolean;
+	data: { data: string[] };
+}
+
+interface SearchResponse {
+	success: boolean;
+	data: { data: SearchResult[] };
+}
+
+interface LeaderboardResponse {
+	success: boolean;
+	data: { data: LeaderboardItem[] };
+}
+
 const isTemplateExplanation = (explanation: string) =>
 	/is (critical|high|medium|low|safe) risk:/.test(explanation) || explanation.includes('appears healthy');
 
@@ -54,6 +80,10 @@ function DashboardPageComponent() {
 	const [leaderboard, setLeaderboard] = useState<any[]>([]);
 
 	const [migrating, setMigrating] = useState<string | null>(null);
+
+	const [searchQuery, setSearchQuery] = useState('');
+	const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+	const [searching, setSearching] = useState(false);
 
 	const handleMigrate = async (packageName: string) => {
 		if (!jobId || !job) return;
@@ -78,6 +108,22 @@ function DashboardPageComponent() {
 		}
 	};
 
+	const handleSearch = async (q: string) => {
+		setSearchQuery(q);
+		if (!q.trim()) {
+			setSearchResults([]);
+			return;
+		}
+		setSearching(true);
+		try {
+			const res = await fetch(`/api/elastic/search?q=${encodeURIComponent(q)}`);
+			const data = (await res.json()) as SearchResponse;
+			if (data.success) setSearchResults(data.data.data ?? []);
+		} finally {
+			setSearching(false);
+		}
+	};
+
 	const fetchJob = useCallback(async () => {
 		if (!jobId) return;
 		const res = await fetch(`/api/status/${jobId}`);
@@ -96,7 +142,7 @@ function DashboardPageComponent() {
 		}
 		fetchJob().finally(() => setLoading(false));
 		fetch('/api/elastic/leaderboard')
-			.then((r) => r.json() as Promise<{ success: boolean; data: { data: LeaderboardItem[] } }>)
+			.then((r) => r.json() as Promise<LeaderboardResponse>)
 			.then((d) => {
 				if (d.success) setLeaderboard(d.data.data ?? []);
 			})
@@ -273,6 +319,49 @@ function DashboardPageComponent() {
 					))}
 				</div>
 
+				<div className="mb-4">
+					<div className="flex items-center gap-2 bg-card border border-border rounded-xl px-4 py-2.5 hover:border-primary/30 transition-colors">
+						<svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+						</svg>
+						<input
+							type="text"
+							placeholder="Search community scans... (e.g. 'request', 'deprecated python')"
+							value={searchQuery}
+							onChange={(e) => handleSearch(e.target.value)}
+							className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
+						/>
+						{searching && <div className="w-3 h-3 rounded-full border border-primary border-t-transparent animate-spin" />}
+					</div>
+
+					{searchResults.length > 0 && (
+						<div className="mt-2 bg-card border border-border rounded-xl overflow-hidden">
+							<p className="text-xs text-muted-foreground px-4 py-2 border-b border-border">
+								{searchResults.length} repos found in community scans
+							</p>
+							<div className="divide-y divide-border">
+								{searchResults.slice(0, 5).map((r: SearchResult) => (
+									<div key={r.job_id} className="px-4 py-3 flex items-center justify-between">
+										<div>
+											<p className="text-xs font-medium text-foreground">{r.repo_url}</p>
+											<p className="text-xs text-muted-foreground mt-0.5">
+												{r.ecosystem} · {r.total_packages} packages · scanned {new Date(r.scanned_at).toLocaleDateString()}
+											</p>
+										</div>
+										<div className="flex items-center gap-2">
+											<span
+												className={`text-xs font-medium ${r.avg_risk_score >= 70 ? 'text-risk-critical' : r.avg_risk_score >= 45 ? 'text-risk-high' : 'text-risk-medium'}`}
+											>
+												{Math.round(r.avg_risk_score)} avg risk
+											</span>
+										</div>
+									</div>
+								))}
+							</div>
+						</div>
+					)}
+				</div>
+
 				{/* Filter tabs */}
 				<div className="flex items-center gap-1 mb-4 flex-wrap">
 					{filterOptions.map((f) => (
@@ -361,9 +450,20 @@ function PackageRow({
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [showAllCves, setShowAllCves] = useState(false);
+	const [coRiskyPackages, setCoRiskyPackages] = useState<string[]>([]);
 	const isPending = migrating === pkg.name || prPending.includes(pkg.name);
 
 	const isAIExplanation = pkg.explanation && !isTemplateExplanation(pkg.explanation);
+
+	useEffect(() => {
+		if (!expanded || coRiskyPackages.length > 0) return;
+		fetch(`/api/elastic/co-risky?package=${encodeURIComponent(pkg.name)}`)
+			.then((r) => r.json() as Promise<CoRiskyResponse>)
+			.then((d) => {
+				if (d.success) setCoRiskyPackages(d.data.data ?? []);
+			})
+			.catch(() => {});
+	}, [expanded, pkg.name]);
 
 	return (
 		<div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -412,6 +512,20 @@ function PackageRow({
 							</div>
 						))}
 					</div>
+
+					{coRiskyPackages.length > 0 && (
+						<div className="bg-muted/30 border border-border rounded-lg p-3">
+							<p className="text-xs text-muted-foreground mb-2">Also commonly risky in repos with this package</p>
+							<div className="flex flex-wrap gap-1.5">
+								{coRiskyPackages.slice(0, 5).map((name) => (
+									<span key={name} className="text-xs font-mono bg-card border border-border px-2 py-0.5 rounded text-muted-foreground">
+										{name}
+									</span>
+								))}
+							</div>
+							<p className="text-[10px] text-muted-foreground/60 mt-1.5">Powered by Elastic community intelligence</p>
+						</div>
+					)}
 
 					{/* Strategy + AI indicator */}
 					<div className="flex items-center gap-2 flex-wrap mb-3">
