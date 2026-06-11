@@ -9,7 +9,7 @@ import {
 	transformFileWithAI,
 } from '@/backend/service/mcp.service';
 import logger from '@backend/util/logger';
-import { getGlobalRiskLeaderboard, searchScans } from '../service/elastic.service';
+import { findCoRiskyPackages, getGlobalRiskLeaderboard, searchScans } from '../service/elastic.service';
 
 export const mcpRouter = new Hono<{ Bindings: CloudflareEnv }>();
 
@@ -120,6 +120,15 @@ const TOOLS = [
 		description: 'Get the most commonly risky packages seen across all scanned repositories',
 		inputSchema: { type: 'object', properties: {} },
 	},
+	{
+		name: 'find_co_risky_packages',
+		description: 'Find packages that commonly appear risky together with the given package across all scanned repos',
+		inputSchema: {
+			type: 'object',
+			properties: { package_name: { type: 'string' } },
+			required: ['package_name'],
+		},
+	},
 ];
 
 const callTool = async (name: string, args: any, env: CloudflareEnv) => {
@@ -132,6 +141,7 @@ const callTool = async (name: string, args: any, env: CloudflareEnv) => {
 	if (name === 'transform_file') return transformFileWithAI(args, env);
 	if (name === 'search_scan_history') return searchScans(args.query, { ecosystem: args.ecosystem, minRisk: args.min_risk }, env);
 	if (name === 'get_risk_leaderboard') return getGlobalRiskLeaderboard(env);
+	if (name === 'find_co_risky_packages') return findCoRiskyPackages(args.package_name, env);
 
 	throw new Error(`Unknown tool: ${name}`);
 };

@@ -5,7 +5,7 @@ import { fetchCVEsBatch } from '@backend/service/osv.service';
 import logger from '@backend/util/logger';
 import { getCachedPackage } from '@backend/service/elastic.service';
 
-export const calculateRiskScore = (signals: RiskSignals): number => {
+export const calculateRiskScore = (signals: RiskSignals, communityRiskCount?: number): number => {
 	let score = 0;
 
 	if (signals.isDeprecated) score += 40;
@@ -23,6 +23,9 @@ export const calculateRiskScore = (signals: RiskSignals): number => {
 	else if (signals.openCveCount >= 5) score += 20;
 	else if (signals.openCveCount >= 2) score += 12;
 	else if (signals.openCveCount >= 1) score += 8;
+
+	if (communityRiskCount && communityRiskCount >= 5) score += 10;
+	else if (communityRiskCount && communityRiskCount >= 2) score += 5;
 
 	return Math.min(score, 100);
 };
