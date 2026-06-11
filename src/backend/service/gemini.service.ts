@@ -1,10 +1,11 @@
 import logger from '@backend/util/logger';
+import { getGoogleAccessToken } from '../helper';
 
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const GEMINI_API_URL = (projectId: string) =>
+	`https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent`;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'llama-3.1-8b-instant';
 
-// Fast, low-CPU function to add numeric comma separators without loading locale configurations
 const formatNumberWithCommas = (num: number): string => {
 	const str = Math.floor(num).toString();
 	if (str.length <= 3) return str;
@@ -22,10 +23,8 @@ const formatNumberWithCommas = (num: number): string => {
 	return result;
 };
 
-// Simple, ultra-fast structural parsing without regex stripping
 const parseJson = (raw: string): any => {
 	const trimmed = raw.trim();
-	// Fallback validation just in case an edge configuration returns backticks
 	if (trimmed.startsWith('```')) {
 		const clean = trimmed.replace(/```json|```/g, '').trim();
 		return JSON.parse(clean);
@@ -33,19 +32,18 @@ const parseJson = (raw: string): any => {
 	return JSON.parse(trimmed);
 };
 
-const geminiGenerate = async (prompt: string, apiKey: string, forceJson = false): Promise<string> => {
+const geminiGenerate = async (prompt: string, serviceAccountJson: string, projectId: string, forceJson = false): Promise<string> => {
 	const body: Record<string, any> = {
-		contents: [{ parts: [{ text: prompt }] }],
+		contents: [{ role: 'user', parts: [{ text: prompt }] }],
 		generationConfig: {
 			temperature: 0.3,
-			maxOutputTokens: 500,
-			...(forceJson ? { responseMimeType: 'application/json' } : {}), // Instructs Gemini to output native JSON
+			...(forceJson ? { responseMimeType: 'application/json' } : {}),
 		},
 	};
-
-	const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+	const accessToken = await getGoogleAccessToken(serviceAccountJson);
+	const res = await fetch(`${GEMINI_API_URL(projectId)}`, {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
 		body: JSON.stringify(body),
 	});
 
@@ -65,7 +63,7 @@ const groqGenerate = async (prompt: string, apiKey: string, forceJson = false): 
 		messages: [{ role: 'user', content: prompt }],
 		temperature: 0.3,
 		max_tokens: 500,
-		...(forceJson ? { response_format: { type: 'json_object' } } : {}), // Instructs Groq to output native JSON
+		...(forceJson ? { response_format: { type: 'json_object' } } : {}),
 	};
 
 	const res = await fetch(GROQ_API_URL, {
@@ -87,14 +85,20 @@ const groqGenerate = async (prompt: string, apiKey: string, forceJson = false): 
 	return data.choices?.[0]?.message?.content ?? '';
 };
 
-const aiGenerate = async (prompt: string, geminiApiKey?: string, groqApiKey?: string, forceJson = false): Promise<string> => {
-	if (!geminiApiKey && !groqApiKey) {
+const aiGenerate = async (
+	prompt: string,
+	geminiServiceAccount?: string,
+	groqApiKey?: string,
+	projectId?: string,
+	forceJson = false,
+): Promise<string> => {
+	if (!geminiServiceAccount && !groqApiKey) {
 		throw new Error('No AI provider available');
 	}
 
-	if (geminiApiKey) {
+	if (geminiServiceAccount && projectId) {
 		try {
-			const result = await geminiGenerate(prompt, geminiApiKey, forceJson);
+			const result = await geminiGenerate(prompt, geminiServiceAccount, projectId, forceJson);
 			logger.info('AI generated via Gemini');
 			return result;
 		} catch (err) {
@@ -129,10 +133,11 @@ export const generateRiskExplanation = async (
 		communitySignal?: string;
 	},
 	cves: Array<{ id: string; severity: string; description: string }>,
-	geminiApiKey?: string,
+	serviceAccountJson?: string,
 	groqApiKey?: string,
+	projectId?: string,
 ): Promise<string> => {
-	if (!geminiApiKey && !groqApiKey) {
+	if (!serviceAccountJson && !groqApiKey) {
 		logger.warn('No AI keys configured for risk explanation', { package: packageName });
 		return '';
 	}
@@ -149,10 +154,10 @@ Known CVEs: ${signals.openCveCount}
 ${signals.communitySignal ? `Community note: ${signals.communitySignal}` : ''}
 ${cves.length > 0 ? `Top CVE: ${cves[0].id} - ${cves[0].description}` : ''}
 
-Write a clear, factual 2-3 sentence explanation of why this package is risky. Be specific about the risks. Do not use markdown. Do not use em dashes or dashes to connect clauses. Use simple sentences only.`;
+Write exactly 2 sentences explaining why this package is risky. Be specific. Do not use markdown. Do not use em dashes. Do not exceed 2 sentences`;
 
 	try {
-		const result = await aiGenerate(prompt, geminiApiKey, groqApiKey, false); // Returns standard text explanation
+		const result = await aiGenerate(prompt, serviceAccountJson, groqApiKey, projectId, false);
 		logger.info('Risk explanation generated', { package: packageName });
 		return result.trim();
 	} catch (err) {
@@ -165,10 +170,11 @@ export const suggestAlternative = async (
 	packageName: string,
 	ecosystem: string,
 	isDeprecated: boolean,
-	geminiApiKey?: string,
+	serviceAccountJson?: string,
 	groqApiKey?: string,
+	projectId?: string,
 ): Promise<{ name: string; reason: string } | null> => {
-	if (!geminiApiKey && !groqApiKey) {
+	if (!serviceAccountJson && !groqApiKey) {
 		logger.warn('No AI keys configured for alternative suggestion', { package: packageName });
 		return null;
 	}
@@ -181,7 +187,7 @@ Respond with ONLY a JSON object in this exact format, no other text. Do not use 
 {"name": "package-name", "reason": "one sentence why it is the best replacement"}`;
 
 	try {
-		const response = await aiGenerate(prompt, geminiApiKey, groqApiKey, true); // Enforces structured JSON output
+		const response = await aiGenerate(prompt, serviceAccountJson, groqApiKey, projectId, true);
 		const parsed = parseJson(response);
 		logger.info('Alternative suggested', { package: packageName, alternative: parsed?.name });
 		return parsed;
@@ -194,8 +200,9 @@ Respond with ONLY a JSON object in this exact format, no other text. Do not use 
 export const estimateMigrationComplexity = async (
 	fromPackage: string,
 	toPackage: string,
-	geminiApiKey?: string,
+	serviceAccountJson?: string,
 	groqApiKey?: string,
+	projectId?: string,
 ): Promise<{ complexity: 'low' | 'medium' | 'high'; estimate: string }> => {
 	const prompt = `Estimate the migration complexity from "${fromPackage}" to "${toPackage}" in a Node.js project.
 
@@ -203,7 +210,7 @@ Respond with ONLY a JSON object in this exact format, no other text. Do not use 
 {"complexity": "low|medium|high", "estimate": "time estimate like '1-2 hours' or '1 day'"}`;
 
 	try {
-		const response = await aiGenerate(prompt, geminiApiKey, groqApiKey, true); // Enforces structured JSON output
+		const response = await aiGenerate(prompt, serviceAccountJson, groqApiKey, projectId, true);
 		const parsed = parseJson(response);
 		logger.info('Migration complexity estimated', { fromPackage, toPackage, complexity: parsed?.complexity });
 		return parsed;

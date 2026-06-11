@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import type { ApiResponse, StatusResponse, PackageRisk } from '@/types';
+import type { ApiResponse, PackageRisk, StatusResponse } from '@/types';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 
 const RISK_COLORS: Record<string, string> = {
 	CRITICAL: 'text-[var(--risk-critical)]',
@@ -31,6 +31,13 @@ const RISK_DOT: Record<string, string> = {
 	SAFE: 'bg-[var(--risk-safe)]',
 };
 
+interface LeaderboardItem {
+	package: string;
+	appearances: number;
+	avg_risk_score: number;
+	affected_repos: number;
+}
+
 const isTemplateExplanation = (explanation: string) =>
 	/is (critical|high|medium|low|safe) risk:/.test(explanation) || explanation.includes('appears healthy');
 
@@ -43,6 +50,33 @@ function DashboardPageComponent() {
 	const [filter, setFilter] = useState<string>('ALL');
 	const [loading, setLoading] = useState(true);
 	const [isEnriching, setIsEnriching] = useState(false);
+	const [isAgentRunning, setIsAgentRunning] = useState(false);
+	const [leaderboard, setLeaderboard] = useState<any[]>([]);
+
+	const [migrating, setMigrating] = useState<string | null>(null);
+
+	const handleMigrate = async (packageName: string) => {
+		if (!jobId || !job) return;
+		setMigrating(packageName);
+		try {
+			await fetch(`/api/migrate/${jobId}`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ packageName, repoUrl: job.repoUrl, platform: job.platform }),
+			});
+			const deadline = Date.now() + 120000;
+			const interval = setInterval(async () => {
+				const updated = await fetchJob();
+				const pkg = updated?.results?.find((r) => r.name === packageName);
+				if (pkg?.agentPR || !updated?.prPending?.includes(packageName) || Date.now() > deadline) {
+					setMigrating(null);
+					clearInterval(interval);
+				}
+			}, 3000);
+		} catch {
+			setMigrating(null);
+		}
+	};
 
 	const fetchJob = useCallback(async () => {
 		if (!jobId) return;
@@ -61,6 +95,12 @@ function DashboardPageComponent() {
 			return;
 		}
 		fetchJob().finally(() => setLoading(false));
+		fetch('/api/elastic/leaderboard')
+			.then((r) => r.json() as Promise<{ success: boolean; data: { data: LeaderboardItem[] } }>)
+			.then((d) => {
+				if (d.success) setLeaderboard(d.data.data ?? []);
+			})
+			.catch(() => {});
 	}, [jobId, router, fetchJob]);
 
 	useEffect(() => {
@@ -79,8 +119,9 @@ function DashboardPageComponent() {
 			setIsEnriching(true);
 		} else if (job.aiEnriched) {
 			setIsEnriching(false);
+			if (!job.agentComplete) setIsAgentRunning(true);
 		}
-	}, [job?.aiEnriching, job?.aiEnriched]);
+	}, [job?.aiEnriching, job?.aiEnriched, job?.agentComplete]);
 
 	useEffect(() => {
 		if (!isEnriching) return;
@@ -92,11 +133,29 @@ function DashboardPageComponent() {
 			if (updated.aiEnriched) {
 				setIsEnriching(false);
 				clearInterval(interval);
+				if (!updated.agentComplete) setIsAgentRunning(true);
 			}
-		}, 5000);
+		}, 3000);
 
 		return () => clearInterval(interval);
 	}, [isEnriching, fetchJob]);
+
+	useEffect(() => {
+		if (!isAgentRunning) return;
+		const deadline = Date.now() + 120000;
+
+		const interval = setInterval(async () => {
+			const updated = await fetchJob();
+			if (!updated) return;
+
+			if (updated.agentComplete || Date.now() > deadline) {
+				setIsAgentRunning(false);
+				clearInterval(interval);
+			}
+		}, 3000);
+
+		return () => clearInterval(interval);
+	}, [isAgentRunning, fetchJob]);
 
 	if (loading) {
 		return (
@@ -174,6 +233,24 @@ function DashboardPageComponent() {
 					</div>
 				)}
 
+				{/* Agent Analyzing Banner */}
+				{isAgentRunning && (
+					<div className="flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-4 py-2.5 mb-5">
+						<div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+						<p className="text-xs text-muted-foreground">Agent is analyzing packages for migration opportunities...</p>
+					</div>
+				)}
+
+				{/* Agent Analysis Complete Banner */}
+				{job.agentAnalysisDone && !isAgentRunning && (
+					<div className="flex items-center gap-2 bg-green-500/5 border border-green-500/20 rounded-lg px-4 py-2.5 mb-5">
+						<div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+						<p className="text-xs text-muted-foreground">
+							Agent analysis complete. Expand packages below to see migration recommendations.
+						</p>
+					</div>
+				)}
+
 				{/* Summary cards */}
 				<div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
 					{[
@@ -212,6 +289,34 @@ function DashboardPageComponent() {
 					))}
 				</div>
 
+				{leaderboard.length > 0 && (
+					<div className="bg-card border border-border rounded-xl p-5 mb-6">
+						<div className="flex items-center gap-2 mb-4">
+							<div className="w-2 h-2 rounded-full bg-primary" />
+							<p className="text-sm font-semibold text-foreground">Community Risk Intelligence</p>
+							<span className="text-xs text-muted-foreground ml-auto">Powered by Elastic</span>
+						</div>
+						<p className="text-xs text-muted-foreground mb-3">Most commonly risky packages seen across all DepShield scans</p>
+						<div className="flex flex-wrap gap-2">
+							{leaderboard.slice(0, 8).map((item: any) => (
+								<div key={item.package} className="flex items-center gap-2 bg-muted/50 border border-border rounded-lg px-3 py-2">
+									<span className="text-xs font-mono text-foreground">{item.package}</span>
+									<span className="text-xs text-muted-foreground">
+										{item.affected_repos} repo{item.affected_repos !== 1 ? 's' : ''}
+									</span>
+									<span
+										className={`text-xs font-medium ${
+											item.avg_risk_score >= 70 ? 'text-risk-critical' : item.avg_risk_score >= 45 ? 'text-risk-high' : 'text-risk-medium'
+										}`}
+									>
+										{item.avg_risk_score}
+									</span>
+								</div>
+							))}
+						</div>
+					</div>
+				)}
+
 				{/* Package list */}
 				<div className="space-y-3">
 					{filtered.length === 0 ? (
@@ -219,7 +324,9 @@ function DashboardPageComponent() {
 							<p className="text-muted-foreground text-sm">No packages in this category.</p>
 						</div>
 					) : (
-						filtered.map((pkg) => <PackageRow key={pkg.name} pkg={pkg} />)
+						filtered.map((pkg) => (
+							<PackageRow key={pkg.name} pkg={pkg} onMigrate={handleMigrate} migrating={migrating} prPending={job?.prPending ?? []} />
+						))
 					)}
 				</div>
 			</div>
@@ -241,9 +348,20 @@ export default function DashboardPage() {
 	);
 }
 
-function PackageRow({ pkg }: { pkg: PackageRisk }) {
+function PackageRow({
+	pkg,
+	onMigrate,
+	migrating,
+	prPending = [],
+}: {
+	pkg: PackageRisk;
+	onMigrate: (name: string) => void;
+	migrating: string | null;
+	prPending?: string[];
+}) {
 	const [expanded, setExpanded] = useState(false);
 	const [showAllCves, setShowAllCves] = useState(false);
+	const isPending = migrating === pkg.name || prPending.includes(pkg.name);
 
 	const isAIExplanation = pkg.explanation && !isTemplateExplanation(pkg.explanation);
 
@@ -342,6 +460,82 @@ function PackageRow({ pkg }: { pkg: PackageRisk }) {
 									</button>
 								)}
 							</div>
+						</div>
+					)}
+
+					{/* Agent Analysis */}
+					{pkg.agentAnalysis && !pkg.agentPR && (
+						<div className="bg-card border border-border rounded-lg p-4 mt-2">
+							<p className="text-xs text-muted-foreground mb-2">Agent Analysis</p>
+							<p className="text-xs text-foreground mb-3">{pkg.agentAnalysis.reason}</p>
+							<div className="flex items-center gap-2 flex-wrap mb-3">
+								<Badge variant="outline" className="text-xs">
+									Confidence: {pkg.agentAnalysis.confidence}%
+								</Badge>
+								<Badge variant="outline" className="text-xs">
+									Complexity: {pkg.agentAnalysis.complexity}
+								</Badge>
+								{pkg.agentAnalysis.breakingChanges && (
+									<Badge variant="outline" className="text-xs border-yellow-500/30 text-yellow-600 bg-yellow-500/5">
+										⚠ {pkg.agentAnalysis.breakingChanges}
+									</Badge>
+								)}
+							</div>
+							{pkg.agentAnalysis.migration_guide_url && (
+								<Link
+									href={pkg.agentAnalysis.migration_guide_url}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="text-xs text-primary hover:underline block mb-3"
+								>
+									Migration guide →
+								</Link>
+							)}
+
+							{pkg.agentAnalysis.needsPR ? (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onMigrate(pkg.name);
+									}}
+									disabled={isPending}
+									className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+								>
+									{isPending ? 'Creating PR...' : `Migrate to ${pkg.agentAnalysis.recommendedAlternative} →`}
+								</button>
+							) : (
+								<p className="text-xs text-green-600">No migration needed</p>
+							)}
+						</div>
+					)}
+
+					{/* Agent Migration */}
+					{pkg.agentPR && (
+						<div className="bg-green-500/5 border border-green-500/20 rounded-lg p-4 mt-4">
+							<p className="text-xs text-muted-foreground mb-2">Agent Migration</p>
+							<Link
+								href={pkg.agentPR.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="flex items-center gap-2 text-xs text-green-600 hover:underline mb-2"
+							>
+								<span>
+									PR #{pkg.agentPR.number}: {pkg.agentPR.title}
+								</span>
+								<span className="text-muted-foreground">→</span>
+								<Badge
+									variant="outline"
+									className={`text-xs ${
+										pkg.agentPR.ci_status === 'success'
+											? 'border-green-500/30 text-green-600 bg-green-500/5'
+											: pkg.agentPR.ci_status === 'failed'
+												? 'border-red-500/30 text-red-600 bg-red-500/5'
+												: 'border-yellow-500/30 text-yellow-600 bg-yellow-500/5'
+									}`}
+								>
+									CI: {pkg.agentPR.ci_status}
+								</Badge>
+							</Link>
 						</div>
 					)}
 				</div>

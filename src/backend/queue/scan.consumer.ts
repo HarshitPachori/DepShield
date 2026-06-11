@@ -4,9 +4,10 @@ import { detectEcosystem, parseDependencies } from '@/backend/service/ecosystem.
 import { generateRiskExplanation, suggestAlternative } from '@/backend/service/gemini.service';
 import { scanAllPackages } from '@/backend/service/risk.service';
 import type { Ecosystem, PackageRisk } from '@/types';
-import { indexScanResults } from '@backend/service/elastic.service';
+import { createIndices, indexRepoScan, indexScanResults } from '@backend/service/elastic.service';
 import logger from '@backend/util/logger';
 import { eq } from 'drizzle-orm';
+import { getGoogleAccessToken, parseGithubUrl, parseGitlabUrl } from '../helper';
 
 const CHUNK_SIZE = 3;
 
@@ -27,10 +28,15 @@ export interface ScanMessage {
 	geminiOnly?: boolean;
 	mergeOnly?: boolean;
 	results?: PackageRisk[];
+	agentOnly?: boolean;
+	highRiskPackages?: PackageRisk[];
+	agentMode?: 'analyse' | 'create_pr';
 }
 
-const updateKV = (env: CloudflareEnv, jobId: string, repoUrl: string, platform: string, data: Record<string, any>) =>
-	env.KV.put(`job:${jobId}`, JSON.stringify({ jobId, repoUrl, platform, ...data }), { expirationTtl: 86400 });
+const updateKV = async (env: CloudflareEnv, jobId: string, repoUrl: string, platform: string, data: Record<string, any>) => {
+	const existing = ((await env.KV.get(`job:${jobId}`, 'json')) as Record<string, any>) ?? {};
+	return env.KV.put(`job:${jobId}`, JSON.stringify({ ...existing, jobId, repoUrl, platform, ...data }), { expirationTtl: 86400 });
+};
 
 const computeSummary = (results: PackageRisk[]) => {
 	const summary = { totalPackages: results.length, criticalCount: 0, highCount: 0, mediumCount: 0, lowCount: 0, safeCount: 0 };
@@ -47,12 +53,26 @@ const computeSummary = (results: PackageRisk[]) => {
 export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
 	logger.info('processScanJob received', {
 		jobId: message.jobId,
-		type: message.geminiOnly ? 'geminiOnly' : message.elasticOnly ? 'elasticOnly' : message.packages ? 'chunk' : 'initial',
+		type: message.agentOnly
+			? 'agentOnly'
+			: message.geminiOnly
+				? 'geminiOnly'
+				: message.elasticOnly
+					? 'elasticOnly'
+					: message.packages
+						? 'chunk'
+						: 'initial',
 		chunkIndex: message.chunkIndex,
 		totalChunks: message.totalChunks,
 	});
 
-	if (message.geminiOnly) {
+	if (message.agentOnly) {
+		if (message.agentMode === 'create_pr') {
+			await processAgentPRCreation(message, env);
+		} else {
+			await processAgentMigration(message, env);
+		}
+	} else if (message.geminiOnly) {
 		await processGeminiEnrichment(message, env);
 	} else if (message.elasticOnly) {
 		try {
@@ -74,7 +94,7 @@ export const processScanJob = async (message: ScanMessage, env: CloudflareEnv): 
 };
 
 export const processMerge = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
-	const { jobId, repoUrl, platform, totalChunks, total } = message;
+	const { jobId, repoUrl, platform, totalChunks, total, ecosystem } = message;
 	const db = getDbInstance(env.DB);
 
 	logger.info('processMerge started', { jobId, totalChunks });
@@ -91,6 +111,12 @@ export const processMerge = async (message: ScanMessage, env: CloudflareEnv): Pr
 	}
 
 	const sorted = allResults.sort((a, b) => b.riskScore - a.riskScore);
+
+	await createIndices(env).catch((err) => logger.error('createIndices failed', err, { jobId }));
+	await indexRepoScan(jobId!, repoUrl, ecosystem ?? 'unknown', sorted, env).catch((err) =>
+		logger.error('Failed to index repo scan', err, { jobId }),
+	);
+
 	const summary = computeSummary(sorted);
 
 	logger.info('Merge summary', { jobId, ...summary });
@@ -113,6 +139,7 @@ export const processMerge = async (message: ScanMessage, env: CloudflareEnv): Pr
 			progress: total!,
 			total: total!,
 			summary,
+			results: sorted,
 		}),
 	]);
 
@@ -134,7 +161,7 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 		return;
 	}
 
-	if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY) {
+	if (!env.GCP_SERVICE_ACCOUNT && !env.GROQ_API_KEY) {
 		logger.warn('No AI keys configured, skipping enrichment', { jobId });
 		const current = ((await env.KV.get(`job:${jobId}`, 'json')) as Record<string, any>) ?? {};
 		await updateKV(env, jobId, repoUrl, platform, { ...current, aiEnriching: false, aiEnriched: true });
@@ -161,12 +188,27 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 			const needsAlternative = pkg.signals.isDeprecated || pkg.signals.lastCommitDaysAgo > 365;
 
 			const [explanation, alternative] = await Promise.all([
-				generateRiskExplanation(pkg.name, pkg.ecosystem, pkg.signals, pkg.cves, env.GEMINI_API_KEY, env.GROQ_API_KEY).catch((err) => {
+				generateRiskExplanation(
+					pkg.name,
+					pkg.ecosystem,
+					pkg.signals,
+					pkg.cves,
+					env.GCP_SERVICE_ACCOUNT,
+					env.GROQ_API_KEY,
+					env.GOOGLE_CLOUD_PROJECT_ID,
+				).catch((err) => {
 					logger.error('generateRiskExplanation failed', err, { package: pkg.name });
 					return '';
 				}),
 				needsAlternative
-					? suggestAlternative(pkg.name, pkg.ecosystem, pkg.signals.isDeprecated, env.GEMINI_API_KEY, env.GROQ_API_KEY).catch((err) => {
+					? suggestAlternative(
+							pkg.name,
+							pkg.ecosystem,
+							pkg.signals.isDeprecated,
+							env.GCP_SERVICE_ACCOUNT,
+							env.GROQ_API_KEY,
+							env.GOOGLE_CLOUD_PROJECT_ID,
+						).catch((err) => {
 							logger.error('suggestAlternative failed', err, { package: pkg.name });
 							return null;
 						})
@@ -211,6 +253,20 @@ const processGeminiEnrichment = async (message: ScanMessage, env: CloudflareEnv)
 	await env.SCAN_QUEUE.send({ jobId, repoUrl, platform, elasticOnly: true }).catch((err) =>
 		logger.error('Failed to queue elastic indexing', err, { jobId }),
 	);
+
+	const highRiskForAgent = enriched
+		.filter((r) => r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH' || r.riskLevel === 'MEDIUM')
+		.slice(0, 5);
+	if (highRiskForAgent.length > 0) {
+		await env.SCAN_QUEUE.send({
+			jobId,
+			repoUrl,
+			platform,
+			agentOnly: true,
+			agentMode: 'analyse',
+			highRiskPackages: highRiskForAgent,
+		}).catch((err) => logger.error('Failed to queue agent analysis', err, { jobId }));
+	}
 };
 
 const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
@@ -252,6 +308,7 @@ const processInitial = async (message: ScanMessage, env: CloudflareEnv): Promise
 				ecosystem: ecosystem.ecosystem,
 				packageManager: ecosystem.packageManager,
 				basePath: ecosystem.basePath,
+				dependencyFile: ecosystem.dependencyFile,
 				allDetected: ecosystem.allDetected,
 			}),
 			db
@@ -351,111 +408,7 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 		await env.KV.put(`chunk:${jobId}:${chunkIndex}`, JSON.stringify(chunkResults), { expirationTtl: 3600 });
 		logger.info('Chunk results stored in KV', { jobId, chunkIndex });
 
-		// const scannedSoFar = Math.min((chunkIndex! + 1) * CHUNK_SIZE, total!);
-		// const isLastChunk = chunkIndex === totalChunks! - 1;
-
-		// await Promise.all([
-		// 	updateKV(env, jobId!, repoUrl, platform, {
-		// 		status: 'scanning',
-		// 		progress: scannedSoFar,
-		// 		total: total!,
-		// 		ecosystem,
-		// 		packageManager,
-		// 		basePath,
-		// 		allDetected,
-		// 	}),
-		// 	db.update(scanJobs).set({ progress: scannedSoFar }).where(eq(scanJobs.id, jobId!)),
-		// ]);
-
-		// logger.info('Chunk progress updated', { jobId, chunkIndex, scannedSoFar, total, isLastChunk });
-
-		// if (isLastChunk) {
-		// 	logger.info('Last chunk — polling for all chunk keys', { jobId, totalChunks });
-
-		// 	let attempts = 0;
-		// 	while (attempts < 15) {
-		// 		const keys = await Promise.all(Array.from({ length: totalChunks! }, (_, i) => env.KV.get(`chunk:${jobId}:${i}`)));
-		// 		const missingCount = keys.filter((k) => k === null).length;
-
-		// 		if (missingCount === 0) {
-		// 			logger.info('All chunk keys present', { jobId, attempts });
-		// 			break;
-		// 		}
-
-		// 		logger.info('Waiting for chunks', { jobId, attempt: attempts, missingCount, totalChunks });
-		// 		await new Promise((r) => setTimeout(r, 1000));
-		// 		attempts++;
-		// 	}
-
-		// 	if (attempts === 15) {
-		// 		logger.warn('Chunk polling timed out — some chunks may be missing', { jobId, totalChunks });
-		// 	}
-
-		// 	const allResults: PackageRisk[] = [];
-		// 	for (let i = 0; i < totalChunks!; i++) {
-		// 		const raw = await env.KV.get(`chunk:${jobId}:${i}`);
-		// 		if (raw) {
-		// 			const parsed = JSON.parse(raw) as PackageRisk[];
-		// 			allResults.push(...parsed);
-		// 			logger.info('Chunk merged', { jobId, chunkIndex: i, count: parsed.length });
-		// 		} else {
-		// 			logger.warn('Chunk key missing during merge', { jobId, chunkIndex: i });
-		// 		}
-		// 	}
-
-		// 	logger.info('All chunks merged', { jobId, totalResults: allResults.length });
-
-		// 	const sorted = allResults.sort((a, b) => b.riskScore - a.riskScore);
-		// 	const summary = computeSummary(sorted);
-
-		// 	logger.info('Final scan summary', { jobId, ...summary });
-
-		// 	await Promise.all([
-		// 		db
-		// 			.insert(scanResults)
-		// 			.values({
-		// 				id: crypto.randomUUID(),
-		// 				jobId: jobId!,
-		// 				resultsJson: JSON.stringify(sorted),
-		// 				...summary,
-		// 			})
-		// 			.catch(async (err) => {
-		// 				logger.warn('scanResults insert failed, trying update', { jobId, error: err instanceof Error ? err.message : err });
-		// 				await db
-		// 					.update(scanResults)
-		// 					.set({ ...summary, resultsJson: JSON.stringify(sorted) })
-		// 					.where(eq(scanResults.jobId, jobId!));
-		// 			}),
-		// 		db.update(scanJobs).set({ status: 'complete', completedAt: new Date().toISOString() }).where(eq(scanJobs.id, jobId!)),
-		// 		updateKV(env, jobId!, repoUrl, platform, {
-		// 			status: 'complete',
-		// 			aiEnriching: true,
-		// 			aiEnriched: false,
-		// 			progress: total!,
-		// 			total: total!,
-		// 			ecosystem,
-		// 			packageManager,
-		// 			basePath,
-		// 			allDetected,
-		// 			summary,
-		// 			results: sorted,
-		// 		}),
-		// 	]);
-
-		// 	for (let i = 0; i < totalChunks!; i++) {
-		// 		env.KV.delete(`chunk:${jobId}:${i}`).catch(() => {});
-		// 	}
-
-		// 	logger.info('Scan job complete', { jobId, totalPackages: sorted.length });
-
-		// 	await env.SCAN_QUEUE.send({ jobId: jobId!, repoUrl, platform, geminiOnly: true }).catch((err) =>
-		// 		logger.error('Failed to queue gemini enrichment', err, { jobId }),
-		// 	);
-		// }
-
-		const scannedSoFar = Math.min((chunkIndex! + 1) * CHUNK_SIZE, total!);
-
-		// read current progress from KV, never go backwards
+		const scannedSoFar = chunkIndex! * CHUNK_SIZE + chunkResults.length;
 		const currentKV = (await env.KV.get(`job:${jobId}`, 'json')) as any;
 		const safeProgress = Math.max(currentKV?.progress ?? 0, scannedSoFar);
 
@@ -472,22 +425,308 @@ const processChunk = async (message: ScanMessage, env: CloudflareEnv): Promise<v
 			db.update(scanJobs).set({ progress: safeProgress }).where(eq(scanJobs.id, jobId!)),
 		]);
 
-		// atomic counter — whichever chunk finishes last triggers merge
-		const countKey = `chunk-count:${jobId}`;
-		const currentCount = parseInt((await env.KV.get(countKey)) ?? '0');
-		const newCount = currentCount + 1;
-		await env.KV.put(countKey, String(newCount), { expirationTtl: 3600 });
+		logger.info('Chunk progress updated', { jobId, chunkIndex, safeProgress, total });
 
-		logger.info('Chunk complete', { jobId, chunkIndex, newCount, totalChunks });
+		const chunkKeys = await Promise.all(Array.from({ length: totalChunks! }, (_, i) => env.KV.get(`chunk:${jobId}:${i}`)));
+		const completedCount = chunkKeys.filter(Boolean).length;
 
-		if (newCount === totalChunks) {
-			logger.info('All chunks done, queuing merge', { jobId });
-			await env.SCAN_QUEUE.send({ jobId: jobId!, repoUrl, platform, mergeOnly: true, totalChunks, total });
+		logger.info('Chunks completed so far', { jobId, completedCount, totalChunks });
+
+		if (completedCount === totalChunks) {
+			logger.info('All chunks present, queuing merge', { jobId });
+			await env.SCAN_QUEUE.send({ jobId: jobId!, repoUrl, platform, mergeOnly: true, totalChunks, total, ecosystem });
 		}
 	} catch (err) {
 		const error = err instanceof Error ? err.message : 'Unknown error';
 		logger.error('processChunk failed', err, { jobId, chunkIndex });
-		updateKV(env, jobId!, repoUrl, platform, { status: 'error', error: `Chunk ${chunkIndex} failed: ${error}` }).catch(() => {});
+		await updateKV(env, jobId!, repoUrl, platform, { status: 'error', error: `Chunk ${chunkIndex} failed: ${error}` }).catch(() => {});
 		throw err;
+	}
+};
+
+const processAgentMigration = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
+	const { jobId, repoUrl, platform, highRiskPackages } = message;
+
+	if (!highRiskPackages?.length) {
+		logger.warn('No high risk packages for agent analysis', { jobId });
+		return;
+	}
+
+	if (!env.GCP_SERVICE_ACCOUNT || !env.GOOGLE_CLOUD_PROJECT_ID || !env.GOOGLE_CLOUD_ENGINE_ID) {
+		logger.warn('Agent not configured', { jobId });
+		return;
+	}
+
+	try {
+		logger.info('Starting agent analysis', { jobId, packageCount: highRiskPackages.length });
+
+		const projectId = env.GOOGLE_CLOUD_PROJECT_ID;
+		const engineId = env.GOOGLE_CLOUD_ENGINE_ID;
+		const base = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/reasoningEngines/${engineId}`;
+		const accessToken = await getGoogleAccessToken(env.GCP_SERVICE_ACCOUNT);
+
+		const sessionRes = await fetch(`${base}/sessions`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ userId: jobId }),
+		});
+		if (!sessionRes.ok) throw new Error(`Session failed: ${sessionRes.status}`);
+		const sessionData: any = await sessionRes.json();
+		const sessionId = sessionData.response?.name?.split('/').pop() ?? sessionData.name?.split('/').pop();
+		if (!sessionId) throw new Error('Failed to extract session ID');
+
+		logger.info('Agent session created', { jobId, sessionId });
+
+		const packageList = highRiskPackages
+			.map(
+				(p) =>
+					`- ${p.name}: risk=${p.riskLevel}, score=${p.riskScore}, ecosystem=${p.ecosystem}, deprecated=${p.signals.isDeprecated}, lastCommit=${p.signals.lastCommitDaysAgo}d ago, alternative=${p.alternative ?? 'unknown'}`,
+			)
+			.join('\n');
+
+		const queryRes = await fetch(`${base}:streamQuery`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				input: {
+					message: `ANALYSIS PHASE ONLY - do NOT create any PRs or MRs.
+
+Repository ecosystem: ${highRiskPackages[0]?.ecosystem ?? 'unknown'}
+Platform: ${platform}
+
+For each package:
+1. Use query_elastic with query_type="health"
+2. Use query_elastic with query_type="alternatives"
+3. Use search_scan_history to find community patterns
+4. Use get_risk_leaderboard for community intelligence
+5. Use Google Search if Elastic has no data
+
+
+Analyze these risky packages:
+${packageList}
+
+Repository: ${repoUrl} (${platform})
+
+For each package:
+1. Use query_elastic with query_type="health" to get health score
+2. Use query_elastic with query_type="alternatives" to find migration targets
+3. Decide: needs_pr=true/false, best alternative, confidence, complexity
+
+Respond ONLY with valid JSON, no other text:
+{
+  "analyses": [
+    {
+      "package": "package-name",
+      "needs_pr": true,
+      "recommended_alternative": "alternative-name",
+      "confidence": 85,
+      "reason": "one sentence why migration is needed",
+      "complexity": "low",
+      "breaking_changes": "what might break"
+    }
+  ]
+}`,
+					session_id: sessionId,
+					user_id: jobId,
+				},
+			}),
+		});
+
+		if (!queryRes.ok) throw new Error(`Agent query failed: ${queryRes.status}`);
+
+		const raw = await queryRes.text();
+		logger.info('Agent analysis raw response', { jobId, raw: raw.substring(0, 2000) });
+
+		let analyses: any[] = [];
+		try {
+			const lines = raw.split('\n').filter(Boolean);
+			for (const line of lines) {
+				try {
+					const parsed = JSON.parse(line);
+					const textParts = parsed?.content?.parts?.filter((p: any) => p.text) ?? [];
+					for (const part of textParts) {
+						const jsonMatch = part.text.match(/\{[\s\S]*"analyses"[\s\S]*\}/);
+						if (jsonMatch) {
+							analyses = JSON.parse(jsonMatch[0]).analyses ?? [];
+							break;
+						}
+					}
+					if (analyses.length) break;
+				} catch {
+					continue;
+				}
+			}
+		} catch {
+			logger.warn('Agent analysis JSON parse failed', { jobId });
+		}
+
+		const db = getDbInstance(env.DB);
+		const row = await db.select().from(scanResults).where(eq(scanResults.jobId, jobId)).limit(1);
+		const currentResults: PackageRisk[] = row[0]?.resultsJson ? JSON.parse(row[0].resultsJson) : [];
+
+		const updatedResults = currentResults.map((pkg) => {
+			const analysis = analyses.find((a: any) => a.package === pkg.name);
+			if (!analysis) return pkg;
+			return {
+				...pkg,
+				agentAnalysis: {
+					needsPR: analysis.needs_pr,
+					recommendedAlternative: analysis.recommended_alternative ?? pkg.alternative,
+					confidence: analysis.confidence,
+					reason: analysis.reason,
+					complexity: analysis.complexity,
+					breakingChanges: analysis.breaking_changes,
+					migration_guide_url: analysis.migration_guide_url ?? null,
+					ecosystem: analysis.ecosystem ?? pkg.ecosystem,
+				},
+			};
+		});
+
+		const existingKV = ((await env.KV.get(`job:${jobId}`, 'json')) as Record<string, any>) ?? {};
+
+		await Promise.all([
+			db
+				.update(scanResults)
+				.set({ resultsJson: JSON.stringify(updatedResults) })
+				.where(eq(scanResults.jobId, jobId)),
+			updateKV(env, jobId, repoUrl, platform, {
+				...existingKV,
+				agentComplete: true,
+				agentAnalysisDone: true,
+				results: updatedResults,
+			}),
+		]);
+
+		logger.info('Agent analysis complete', { jobId, analysed: analyses.length });
+	} catch (err: any) {
+		logger.error('Agent analysis failed', err, { jobId });
+		const existingKV = ((await env.KV.get(`job:${jobId}`, 'json')) as Record<string, any>) ?? {};
+		await updateKV(env, jobId, repoUrl, platform, {
+			...existingKV,
+			agentComplete: false,
+			agentError: err.message || 'Agent analysis failed',
+		});
+	}
+};
+
+const processAgentPRCreation = async (message: ScanMessage, env: CloudflareEnv): Promise<void> => {
+	const { jobId, repoUrl, platform, highRiskPackages } = message;
+	const pkg = highRiskPackages![0];
+
+	if (!env.GCP_SERVICE_ACCOUNT || !env.GOOGLE_CLOUD_PROJECT_ID || !env.GOOGLE_CLOUD_ENGINE_ID) {
+		logger.warn('Agent not configured for PR creation', { jobId });
+		return;
+	}
+
+	try {
+		logger.info('Starting agent PR creation', { jobId, package: pkg.name });
+
+		const projectId = env.GOOGLE_CLOUD_PROJECT_ID;
+		const engineId = env.GOOGLE_CLOUD_ENGINE_ID;
+		const base = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/reasoningEngines/${engineId}`;
+		const accessToken = await getGoogleAccessToken(env.GCP_SERVICE_ACCOUNT);
+
+		const sessionRes = await fetch(`${base}/sessions`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ userId: `${jobId}-pr` }),
+		});
+		if (!sessionRes.ok) throw new Error(`Session failed: ${sessionRes.status}`);
+		const sessionData: any = await sessionRes.json();
+		const sessionId = sessionData.response?.name?.split('/').pop() ?? sessionData.name?.split('/').pop();
+		if (!sessionId) throw new Error('Failed to extract session ID');
+
+		const toPackage = pkg.agentAnalysis?.recommendedAlternative ?? pkg.alternative ?? '';
+		const platformTool = platform === 'github' ? 'create_github_pr' : 'create_gitlab_mr';
+
+		let ownerRepoPart = '';
+		if (platform === 'github') {
+			const { owner, repo } = parseGithubUrl(repoUrl);
+			ownerRepoPart = `- owner: ${owner}\n- repo: ${repo}`;
+		} else {
+			const { fullPath } = parseGitlabUrl(repoUrl);
+			ownerRepoPart = `- repo: ${fullPath}`;
+		}
+
+		const queryRes = await fetch(`${base}:streamQuery`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				input: {
+					message: `CREATE PR PHASE.
+
+Package migration: ${pkg.name} to ${toPackage}
+Ecosystem: ${pkg.ecosystem}
+Repository: ${repoUrl} (${platform})
+Job ID: ${jobId}
+Risk: ${pkg.riskLevel} (score: ${pkg.riskScore})
+Breaking changes: ${pkg.agentAnalysis?.breakingChanges ?? 'unknown'}
+Migration guide: ${pkg.agentAnalysis?.migration_guide_url ?? 'none'}
+
+Use ${platformTool} tool with these exact parameters:
+- from_pkg: ${pkg.name}
+- to_pkg: ${toPackage}
+- job_id: ${jobId}
+${ownerRepoPart}
+
+The tool will:
+1. Detect the correct manifest file for ${pkg.ecosystem} ecosystem
+2. Resolve the best compatible version for ${toPackage} based on existing dependencies
+3. Scan all source files and apply AI-powered code transformation
+4. Commit all changes and create the PR/MR
+
+Report the PR/MR URL when done.`,
+					session_id: sessionId,
+					user_id: `${jobId}-pr`,
+				},
+			}),
+		});
+
+		if (!queryRes.ok) throw new Error(`Agent PR query failed: ${queryRes.status}`);
+
+		const raw = await queryRes.text();
+		logger.info('Agent PR creation response', { jobId, raw: raw.substring(0, 2000) });
+
+		const prUrlMatch = raw.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
+		const mrUrlMatch = raw.match(/https:\/\/gitlab\.com\/[^\s"']+\/-\/merge_requests\/\d+/);
+		const prUrl = prUrlMatch?.[0] ?? mrUrlMatch?.[0];
+
+		const db = getDbInstance(env.DB);
+		const row = await db.select().from(scanResults).where(eq(scanResults.jobId, jobId)).limit(1);
+		const currentResults: PackageRisk[] = row[0]?.resultsJson ? JSON.parse(row[0].resultsJson) : [];
+
+		const updatedResults = currentResults.map((r) =>
+			r.name === pkg.name
+				? {
+						...r,
+						agentPR: prUrl
+							? {
+									url: prUrl,
+									number: parseInt(prUrl.split('/').pop() ?? '0'),
+									title: `Migrate ${pkg.name} → ${toPackage}`,
+									ci_status: 'pending' as const,
+								}
+							: undefined,
+					}
+				: r,
+		);
+
+		const existingKV = ((await env.KV.get(`job:${jobId}`, 'json')) as Record<string, any>) ?? {};
+		await Promise.all([
+			db
+				.update(scanResults)
+				.set({ resultsJson: JSON.stringify(updatedResults) })
+				.where(eq(scanResults.jobId, jobId)),
+			updateKV(env, jobId, repoUrl, platform, {
+				...existingKV,
+				results: updatedResults,
+				prPending: (existingKV.prPending ?? []).filter((n: string) => n !== pkg.name),
+				agentPRCreated: true,
+			}),
+		]);
+
+		logger.info('Agent PR creation complete', { jobId, package: pkg.name, prUrl });
+	} catch (err: any) {
+		logger.error('Agent PR creation failed', err, { jobId, package: pkg.name });
 	}
 };

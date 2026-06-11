@@ -160,3 +160,73 @@ export const parseGoMod = (content: string): Record<string, string> => {
 };
 
 export const formatDate = (date: Date): string => date.toISOString().split('T')[0];
+
+// Helper to create base64url encoding
+function base64UrlEncode(str: string): string {
+	return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Full JWT signing using Web Crypto API (works in Cloudflare Workers)
+async function createSignedJWT(credentials: any): Promise<string> {
+	const { client_email, private_key, private_key_id, project_id } = credentials;
+
+	const now = Math.floor(Date.now() / 1000);
+	const expires = now + 3600; // 1 hour
+
+	const header = {
+		alg: 'RS256',
+		typ: 'JWT',
+		kid: private_key_id,
+	};
+
+	const payload = {
+		iss: client_email,
+		scope: 'https://www.googleapis.com/auth/cloud-platform',
+		aud: 'https://oauth2.googleapis.com/token',
+		exp: expires,
+		iat: now,
+	};
+
+	const headerB64 = base64UrlEncode(JSON.stringify(header));
+	const payloadB64 = base64UrlEncode(JSON.stringify(payload));
+	const signatureInput = `${headerB64}.${payloadB64}`;
+
+	// Import private key
+	const pem = private_key
+		.replace(/-----BEGIN PRIVATE KEY-----/, '')
+		.replace(/-----END PRIVATE KEY-----/, '')
+		.replace(/\n/g, '');
+
+	const binaryDer = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
+
+	const key = await crypto.subtle.importKey('pkcs8', binaryDer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+
+	const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(signatureInput));
+
+	const signatureB64 = base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)));
+
+	return `${signatureInput}.${signatureB64}`;
+}
+
+export async function getGoogleAccessToken(serviceAccountJson: string): Promise<string> {
+	const credentials = typeof serviceAccountJson === 'string' ? JSON.parse(serviceAccountJson) : serviceAccountJson;
+
+	const jwt = await createSignedJWT(credentials);
+
+	const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+		body: new URLSearchParams({
+			grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+			assertion: jwt,
+		}),
+	});
+
+	const tokenData = (await tokenRes.json()) as any;
+
+	if (!tokenRes.ok) {
+		throw new Error(`Token exchange failed: ${tokenData.error}`);
+	}
+
+	return tokenData.access_token;
+}

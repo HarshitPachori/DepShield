@@ -55,6 +55,22 @@ export interface PackageRisk {
 	alternativeCompatibility?: number;
 	alternativeReason?: string;
 	cves: CVE[];
+	agentPR?: {
+		url: string;
+		number: number;
+		title: string;
+		ci_status: 'success' | 'failed' | 'pending';
+	};
+	agentAnalysis?: {
+		needsPR: boolean;
+		recommendedAlternative: string;
+		confidence: number;
+		reason: string;
+		complexity: string;
+		breakingChanges?: string;
+		migration_guide_url?: string;
+		ecosystem?: string;
+	};
 }
 
 export interface EcosystemDetection {
@@ -128,7 +144,7 @@ export interface ScanResponse {
 
 export interface StatusResponse {
 	jobId: string;
-	status: 'pending' | 'scanning' | 'complete' | 'error';
+	status: 'pending' | 'scanning' | 'complete' | 'error' | 'enriching';
 	progress: number;
 	total: number;
 	repoUrl: string;
@@ -149,6 +165,24 @@ export interface StatusResponse {
 	error?: string;
 	aiEnriching?: boolean;
 	aiEnriched?: boolean;
+	agentComplete?: boolean;
+	agentResult?: {
+		prs?: Array<{
+			url: string;
+			number: number;
+			title: string;
+			ci_status: string;
+		}>;
+		mrs?: Array<{
+			url: string;
+			id: number;
+			title: string;
+			ci_status: string;
+		}>;
+		summary?: string;
+	};
+	agentAnalysisDone?: boolean;
+	prPending?: string[];
 }
 
 export interface SimulateRequest {
