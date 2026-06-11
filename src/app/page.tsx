@@ -286,13 +286,20 @@ export default function Home() {
 				</div>
 
 				{/* Example repos */}
-				<div className="flex flex-wrap gap-x-3 gap-y-1 mt-5 justify-center items-center">
+				<div className="flex flex-wrap gap-x-3 gap-y-1 mt-5 justify-center items-center  max-w-3xl">
 					<span className="text-muted-foreground text-xs">Try:</span>
-					{['github.com/expressjs/express', 'github.com/axios/axios'].map((example) => (
+					{[
+						'github.com/HarshitPachori/DepShield-Test-1',
+						'github.com/HarshitPachori/DepShield-Test-2',
+						'github.com/HarshitPachori/DepShield-Test-3',
+						'github.com/HarshitPachori/DepShield-Test-4',
+						'github.com/HarshitPachori/ride_fast',
+						'gitlab.com/harshitpachori345/depshield-migration-test',
+					].map((example) => (
 						<button
 							key={example}
 							onClick={() => setRepoUrl(`https://${example}`)}
-							className="text-xs text-primary/70 hover:text-primary transition-colors underline underline-offset-2"
+							className="text-xs text-primary/70 hover:text-primary cursor-pointer transition-colors underline underline-offset-2"
 						>
 							{example}
 						</button>
@@ -311,7 +318,7 @@ export default function Home() {
 								<button
 									key={scan.jobId}
 									onClick={() => router.push(`/dashboard?jobId=${scan.jobId}`)}
-									className="w-full flex items-center justify-between bg-card border border-border hover:border-primary/30 rounded-xl px-4 py-3 transition-colors text-left group"
+									className="w-full flex items-center justify-between cursor-pointer bg-card border border-border hover:border-primary/30 rounded-xl px-4 py-3 transition-colors text-left group"
 								>
 									<div className="flex items-center gap-3 min-w-0">
 										{scan.platform === 'github' ? (
@@ -411,7 +418,7 @@ export default function Home() {
 												setRepoUrl(`https://${repo}`);
 												dismissDialog();
 											}}
-											className="text-primary hover:underline block"
+											className="text-primary hover:underline block cursor-pointer"
 										>
 											{repo}
 										</button>

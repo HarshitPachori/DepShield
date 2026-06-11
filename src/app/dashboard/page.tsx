@@ -170,7 +170,7 @@ function DashboardPageComponent() {
 			<div className="min-h-screen flex items-center justify-center">
 				<div className="text-center">
 					<p className="text-muted-foreground text-sm mb-4">No results found.</p>
-					<Button variant="outline" onClick={() => router.push('/')}>
+					<Button variant="outline" className="cursor-pointer" onClick={() => router.push('/')}>
 						New Scan
 					</Button>
 				</div>
@@ -263,7 +263,7 @@ function DashboardPageComponent() {
 						<button
 							key={s.level}
 							onClick={() => setFilter(filter === s.level ? 'ALL' : s.level)}
-							className={`bg-card border rounded-xl p-4 text-left transition-all hover:border-primary/20 ${
+							className={`bg-card border rounded-xl p-4 text-left transition-all hover:border-primary/20 cursor-pointer ${
 								filter === s.level ? RISK_BG[s.level] : 'border-border'
 							}`}
 						>
@@ -279,7 +279,7 @@ function DashboardPageComponent() {
 						<button
 							key={f.value}
 							onClick={() => setFilter(f.value)}
-							className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+							className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
 								filter === f.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
 							}`}
 						>
@@ -369,7 +369,7 @@ function PackageRow({
 		<div className="bg-card border border-border rounded-xl overflow-hidden">
 			<button
 				onClick={() => setExpanded(!expanded)}
-				className="w-full flex items-start gap-3 px-4 py-4 hover:bg-muted/30 transition-colors text-left"
+				className="w-full flex items-start gap-3 px-4 py-4 hover:bg-muted/30 transition-colors text-left cursor-pointer"
 			>
 				<div className={`w-2 h-2 rounded-full shrink-0 mt-1.25 ${RISK_DOT[pkg.riskLevel]}`} />
 				<div className="flex-1 min-w-0">
@@ -455,7 +455,7 @@ function PackageRow({
 									</div>
 								))}
 								{pkg.cves.length > 3 && (
-									<button onClick={() => setShowAllCves(!showAllCves)} className="text-primary text-xs hover:underline mt-1">
+									<button onClick={() => setShowAllCves(!showAllCves)} className="text-primary text-xs hover:underline mt-1 cursor-pointer">
 										{showAllCves ? 'Show less' : `+${pkg.cves.length - 3} more`}
 									</button>
 								)}
