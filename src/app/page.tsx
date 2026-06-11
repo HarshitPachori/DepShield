@@ -5,7 +5,19 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Shield, Zap, GitPullRequest, Clock, CheckCircle, AlertCircle, KeyRound, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+	Shield,
+	Zap,
+	GitPullRequest,
+	Clock,
+	CheckCircle,
+	AlertCircle,
+	KeyRound,
+	ChevronDown,
+	ChevronUp,
+	AlertTriangle,
+	X,
+} from 'lucide-react';
 import { GithubIcon, GitlabIcon } from '@/components/icons';
 import type { ApiResponse, ScanResponse } from '@/types';
 
@@ -51,6 +63,20 @@ export default function Home() {
 	const [showPat, setShowPat] = useState(false);
 	const [githubPat, setGithubPat] = useState('');
 	const [gitlabPat, setGitlabPat] = useState('');
+	const [showDialog, setShowDialog] = useState(false);
+	const [showBanner, setShowBanner] = useState(true);
+
+	useEffect(() => {
+		const dismissed = localStorage.getItem('depshield_welcome_dismissed');
+		console.log({ dismissed, type: typeof dismissed });
+
+		if (!dismissed || dismissed === 'false') setShowDialog(true);
+	}, []);
+
+	const dismissDialog = () => {
+		localStorage.setItem('depshield_welcome_dismissed', 'true');
+		setShowDialog(false);
+	};
 
 	useEffect(() => {
 		const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
@@ -342,6 +368,75 @@ export default function Home() {
 					))}
 				</div>
 			</section>
+			{showDialog && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+					<div className="bg-card border border-border rounded-2xl p-6 max-w-lg w-full shadow-2xl">
+						<div className="flex items-start justify-between mb-4">
+							<div className="flex items-center gap-2">
+								<Zap size={18} className="text-primary" />
+								<h2 className="text-foreground font-bold text-base">Welcome to DepShield</h2>
+							</div>
+							<button onClick={dismissDialog} className="text-muted-foreground hover:text-foreground transition-colors">
+								<X size={16} />
+							</button>
+						</div>
+
+						<div className="space-y-4 text-xs text-muted-foreground leading-relaxed">
+							<div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+								<p className="text-primary font-medium mb-1">Currently optimized for Node.js projects</p>
+								<p>
+									Full scanning and AI migration PRs work best with JavaScript/Node.js repos using{' '}
+									<code className="bg-muted px-1 rounded">package.json</code> - Express, Next.js, React and similar frameworks.
+								</p>
+							</div>
+
+							<div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3">
+								<div className="flex items-center gap-1.5 mb-1">
+									<AlertTriangle size={12} className="text-yellow-600" />
+									<p className="text-yellow-600 font-medium">Other ecosystems - coming soon</p>
+								</div>
+								<p>
+									Python, Java, and Go detection is implemented but end-to-end migration PR creation is still being validated. Results may
+									vary.
+								</p>
+							</div>
+
+							<div className="bg-muted/50 border border-border rounded-lg p-3">
+								<p className="font-medium text-foreground mb-1">Try these public test repos</p>
+								<div className="space-y-1">
+									{['github.com/HarshitPachori/DepShield-Test-1'].map((repo) => (
+										<button
+											key={repo}
+											onClick={() => {
+												setRepoUrl(`https://${repo}`);
+												dismissDialog();
+											}}
+											className="text-primary hover:underline block"
+										>
+											{repo}
+										</button>
+									))}
+								</div>
+							</div>
+
+							<div className="bg-muted/30 border border-border rounded-lg p-3">
+								<p className="font-medium text-foreground mb-1">Demo infrastructure note</p>
+								<p>
+									Running on free Cloudflare Workers for this hackathon demo. Not production-grade built to showcase AI-powered dependency
+									intelligence using Gemini, Google Cloud Agent Builder, and Elastic.
+								</p>
+							</div>
+						</div>
+
+						<button
+							onClick={dismissDialog}
+							className="w-full mt-5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+						>
+							Got it, let me scan a repo
+						</button>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
