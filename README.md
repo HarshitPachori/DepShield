@@ -2,7 +2,7 @@
 
 Scan GitHub and GitLab repositories for risky dependencies. Get AI-powered risk analysis and automated migration PRs.
 
-🔗 **Live Demo:** https://depshield.hp3.workers.dev
+🔗 **Live Demo**: https://depshield.hp3.workers.dev
 
 > Built for the Google Cloud Rapid Agent Hackathon 2026. Currently optimized for Node.js projects. Python, Java, and Go support is in progress.
 
