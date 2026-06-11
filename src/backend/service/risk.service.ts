@@ -9,8 +9,8 @@ export const calculateRiskScore = (signals: RiskSignals): number => {
 	let score = 0;
 
 	if (signals.isDeprecated) score += 40;
-	if (signals.lastCommitDaysAgo > 730) score += 25;
-	else if (signals.lastCommitDaysAgo > 365) score += 15;
+	if (signals.lastCommitDaysAgo > 730) score += 35;
+	else if (signals.lastCommitDaysAgo > 365) score += 20;
 	else if (signals.lastCommitDaysAgo > 180) score += 8;
 	else if (signals.lastCommitDaysAgo > 90) score += 3;
 	if (signals.downloadTrendPercent < -50) score += 20;
@@ -28,17 +28,18 @@ export const calculateRiskScore = (signals: RiskSignals): number => {
 };
 
 export const getRiskLevel = (score: number): RiskLevel => {
-	if (score >= 80) return 'CRITICAL';
-	if (score >= 60) return 'HIGH';
-	if (score >= 35) return 'MEDIUM';
-	if (score >= 15) return 'LOW';
+	if (score >= 70) return 'CRITICAL';
+	if (score >= 45) return 'HIGH';
+	if (score >= 25) return 'MEDIUM';
+	if (score >= 10) return 'LOW';
 	return 'SAFE';
 };
 
-export const determineFixStrategy = (signals: RiskSignals, cves: CVE[]): FixStrategy => {
+export const determineFixStrategy = (signals: RiskSignals, cves: CVE[], ecosystem: Ecosystem): FixStrategy => {
 	if (signals.isDeprecated) return 'migrate';
 	if (signals.lastCommitDaysAgo > 730) return 'migrate';
 	if (cves.some((c) => c.fixedVersion)) return 'version_bump';
+	if (ecosystem === 'java' || ecosystem === 'go') return cves.length > 0 ? 'version_bump' : 'monitor';
 	if (signals.openCveCount === 0) return 'monitor';
 	return 'migrate';
 };
@@ -71,7 +72,7 @@ export const scanPackage = async (
 	prefetchedCves?: CVE[],
 	prefetchedDownloadStats?: NpmDownloadStats,
 ): Promise<PackageRisk> => {
-	const cached = await getCachedPackage(name, ecosystem, env).catch(() => null);
+	const cached = await getCachedPackage(name, ecosystem, env, declaredVersion).catch(() => null);
 	if (cached) {
 		logger.info('Cache hit', { package: name, ecosystem });
 		return cached;
@@ -129,7 +130,7 @@ export const scanPackage = async (
 
 	const riskScore = calculateRiskScore(signals);
 	const riskLevel = getRiskLevel(riskScore);
-	const fixStrategy = determineFixStrategy(signals, cves);
+	const fixStrategy = determineFixStrategy(signals, cves, ecosystem);
 	const explanation = generateExplanation(name, signals, riskLevel);
 
 	logger.info('Package scan complete', {
@@ -225,9 +226,8 @@ export const scanAllPackages = async (
 				},
 			);
 			if (result) results.push(result);
+			onProgress?.(results.length, total);
 		}
-
-		onProgress?.(Math.min(i + BATCH_SIZE, total), total);
 
 		if (i + BATCH_SIZE < filtered.length) {
 			await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY));

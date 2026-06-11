@@ -8,6 +8,7 @@ import logger from '@backend/util/logger';
 import { errorResponse, successResponse } from '@backend/util/response';
 import { parseGithubUrl, parseGitlabUrl } from '@backend/helper';
 import { desc, eq } from 'drizzle-orm';
+import { encryptToken } from '@backend/util/encryption';
 
 const validateRepo = async (repoUrl: string, platform: string, token?: string): Promise<boolean> => {
 	try {
@@ -42,7 +43,7 @@ const scanSchema = z.object({
 export const scanRouter = new Hono<{ Bindings: CloudflareEnv }>();
 
 scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
-	const { repoUrl } = c.req.valid('json');
+	const { repoUrl, token } = c.req.valid('json');
 	const githubToken = c.env.GITHUB_TOKEN;
 	const gitlabToken = c.env.GITLAB_TOKEN;
 
@@ -52,7 +53,7 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 		return c.json(errorResponse('Unsupported platform. Only GitHub and GitLab are supported.', 400), 400);
 	}
 
-	const platformToken = platform === 'github' ? githubToken : gitlabToken;
+	const platformToken = token || (platform === 'github' ? githubToken : gitlabToken);
 
 	if (!platformToken) {
 		logger.warn('No platform token configured', { platform });
@@ -70,14 +71,17 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 
 	const recent = existingJob[0];
 	if (recent && (recent.status === 'pending' || recent.status === 'scanning')) {
-		return c.json(successResponse({ jobId: recent.id, status: recent.status, repoUrl, platform }, 'Scan already in progress'), 200);
+		const kvData = await c.env.KV.get(`job:${recent.id}`);
+		if (kvData) {
+			return c.json(successResponse({ jobId: recent.id, status: recent.status, repoUrl, platform }, 'Scan already in progress'), 200);
+		}
 	}
 
 	logger.info('Creating scan job', { jobId, repoUrl, platform });
 
 	const kvPayload = JSON.stringify({ jobId, status: 'pending', progress: 0, total: 0, repoUrl, platform });
 
-	await Promise.all([
+	const promises: Promise<any>[] = [
 		db.insert(scanJobs).values({
 			id: jobId,
 			repoUrl,
@@ -87,7 +91,17 @@ scanRouter.post('/', zValidator('json', scanSchema), async (c) => {
 			totalPackages: 0,
 		}),
 		c.env.KV.put(`job:${jobId}`, kvPayload, { expirationTtl: 86400 }),
-	]);
+	];
+
+	if (token) {
+		promises.push(
+			encryptToken(token, c.env.ENCRYPTION_KEY).then((encrypted) =>
+				c.env.KV.put(`job-token:${jobId}`, encrypted, { expirationTtl: 86400 }),
+			),
+		);
+	}
+
+	await Promise.all(promises);
 
 	try {
 		await c.env.SCAN_QUEUE.send({ jobId, repoUrl, platform, token: platformToken });

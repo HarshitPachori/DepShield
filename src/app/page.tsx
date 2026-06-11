@@ -5,9 +5,34 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Shield, Zap, GitPullRequest, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Shield, Zap, GitPullRequest, Clock, CheckCircle, AlertCircle, KeyRound, ChevronDown, ChevronUp } from 'lucide-react';
 import { GithubIcon, GitlabIcon } from '@/components/icons';
 import type { ApiResponse, ScanResponse } from '@/types';
+
+const XOR_KEY = 'depshield-local-v1';
+const xorObfuscate = (str: string): string => {
+	try {
+		return btoa(
+			str
+				.split('')
+				.map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ XOR_KEY.charCodeAt(i % XOR_KEY.length)))
+				.join(''),
+		);
+	} catch {
+		return '';
+	}
+};
+const xorDeobfuscate = (encoded: string): string => {
+	try {
+		const str = atob(encoded);
+		return str
+			.split('')
+			.map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ XOR_KEY.charCodeAt(i % XOR_KEY.length)))
+			.join('');
+	} catch {
+		return '';
+	}
+};
 
 interface ScanHistory {
 	jobId: string;
@@ -23,11 +48,24 @@ export default function Home() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState('');
 	const [recentScans, setRecentScans] = useState<ScanHistory[]>([]);
+	const [showPat, setShowPat] = useState(false);
+	const [githubPat, setGithubPat] = useState('');
+	const [gitlabPat, setGitlabPat] = useState('');
 
 	useEffect(() => {
 		const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
 		setRecentScans(history);
+		const gh = localStorage.getItem('depshield_gh_pat');
+		const gl = localStorage.getItem('depshield_gl_pat');
+		if (gh) setGithubPat(xorDeobfuscate(gh));
+		if (gl) setGitlabPat(xorDeobfuscate(gl));
 	}, []);
+
+	const savePat = (platform: 'github' | 'gitlab', value: string) => {
+		const key = platform === 'github' ? 'depshield_gh_pat' : 'depshield_gl_pat';
+		if (value) localStorage.setItem(key, xorObfuscate(value));
+		else localStorage.removeItem(key);
+	};
 
 	const detectPlatform = (url: string) => {
 		if (url.includes('github.com')) return 'github';
@@ -48,10 +86,11 @@ export default function Home() {
 		setError('');
 		setLoading(true);
 		try {
+			const token = platform === 'github' ? githubPat.trim() : gitlabPat.trim();
 			const res = await fetch('/api/scan', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ repoUrl }),
+				body: JSON.stringify({ repoUrl, ...(token ? { token } : {}) }),
 			});
 			const data: ApiResponse<ScanResponse> = await res.json();
 			if (!res.ok || !data.success) {
@@ -172,6 +211,52 @@ export default function Home() {
 							{platform === 'github' ? '🐙 GitHub' : '🦊 GitLab'} repository detected
 						</p>
 					)}
+
+					{/* PAT Settings */}
+					<div className="mt-3">
+						<button
+							onClick={() => setShowPat((v) => !v)}
+							className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+						>
+							<KeyRound size={12} />
+							<span>Private repo or auto-PR? Add tokens</span>
+							{showPat ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+						</button>
+
+						{showPat && (
+							<div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+								<div className="flex items-center gap-2 bg-card border border-border rounded-lg px-3 py-2">
+									<GithubIcon size={14} className="text-muted-foreground shrink-0" />
+									<Input
+										type="password"
+										value={githubPat}
+										onChange={(e) => {
+											setGithubPat(e.target.value);
+											savePat('github', e.target.value);
+										}}
+										placeholder="GitHub PAT (ghp_...)"
+										className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-xs placeholder:text-muted-foreground/40 p-0 h-auto"
+									/>
+								</div>
+								<div className="flex items-center gap-2 bg-card border border-border rounded-lg px-3 py-2">
+									<GitlabIcon size={14} className="text-orange-400 shrink-0" />
+									<Input
+										type="password"
+										value={gitlabPat}
+										onChange={(e) => {
+											setGitlabPat(e.target.value);
+											savePat('gitlab', e.target.value);
+										}}
+										placeholder="GitLab PAT (glpat-...)"
+										className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-xs placeholder:text-muted-foreground/40 p-0 h-auto"
+									/>
+								</div>
+								<p className="text-muted-foreground/60 text-[10px] sm:col-span-2 pl-1">
+									Tokens stored locally (obfuscated). Used for private repos and auto-creating migration PRs/MRs.
+								</p>
+							</div>
+						)}
+					</div>
 				</div>
 
 				{/* Example repos */}

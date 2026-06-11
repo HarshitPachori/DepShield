@@ -14,6 +14,7 @@ const OSV_ECOSYSTEM_MAP: Partial<Record<Ecosystem, string>> = {
 interface OsvVulnerability {
 	id: string;
 	summary?: string;
+	details?: string;
 	severity?: Array<{ type: string; score: string }>;
 	affected?: Array<{
 		ranges?: Array<{
@@ -25,7 +26,6 @@ interface OsvVulnerability {
 	database_specific?: { severity?: string };
 }
 
-// Low-CPU alternative to the heavy version cleaning regex
 const cleanVersionString = (version: string): string => {
 	let startIdx = 0;
 	while (
@@ -40,7 +40,6 @@ const cleanVersionString = (version: string): string => {
 	}
 	const stripped = startIdx > 0 ? version.slice(startIdx) : version;
 
-	// Quick fast path index search instead of regex split array manipulation
 	const spaceIdx = stripped.indexOf(' ');
 	return spaceIdx !== -1 ? stripped.slice(0, spaceIdx) : stripped;
 };
@@ -115,12 +114,37 @@ export const fetchCVEsBatch = async (
 
 		const data = (await res.json()) as { results: Array<{ vulns?: OsvVulnerability[] }> };
 
+		const vulnIds = [...new Set(data.results.flatMap((result) => result.vulns?.map((v) => v.id) ?? []))];
+
+		const vulnDetails = new Map<string, OsvVulnerability>();
+		if (vulnIds.length > 0) {
+			await Promise.all(
+				vulnIds.map(async (id) => {
+					try {
+						const detailRes = await fetch(`https://api.osv.dev/v1/vulns/${id}`);
+						if (detailRes.ok) {
+							const vuln = (await detailRes.json()) as OsvVulnerability;
+							vulnDetails.set(id, vuln);
+						}
+					} catch {
+						logger.warn('OSV vuln detail fetch failed', { id });
+					}
+				}),
+			);
+		}
+
 		let totalCves = 0;
 		data.results.forEach((result, index) => {
-			const cves = result.vulns?.map(parseCVE) ?? [];
+			const cves =
+				result.vulns?.map((v) => {
+					const full = vulnDetails.get(v.id);
+					return parseCVE(full ?? v);
+				}) ?? [];
 			results.set(packages[index].name, cves);
 			totalCves += cves.length;
 		});
+
+		logger.info('OSV batch query complete', { packages: packages.length, totalCves, uniqueVulns: vulnIds.length });
 
 		logger.info('OSV batch query complete', { packages: packages.length, totalCves });
 	} catch (err) {
@@ -144,7 +168,7 @@ const parseCVE = (vuln: OsvVulnerability): CVE => ({
 	severity: detectSeverity(vuln),
 	fixedVersion: extractFixedVersion(vuln),
 	affectedVersions: extractAffectedVersions(vuln),
-	description: vuln.summary ?? 'No description available',
+	description: vuln.summary?.trim() || vuln.details?.split('\n')[0]?.trim() || 'No description available',
 });
 
 const detectSeverity = (vuln: OsvVulnerability): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' => {

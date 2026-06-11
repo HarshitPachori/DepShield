@@ -25,17 +25,19 @@ const fetchGithubFileList = async (repoUrl: string, path: string = '', token?: s
 	return files.map((f) => f.name);
 };
 
-const fetchGitlabFileList = async (repoUrl: string, path: string = '', token?: string): Promise<string[]> => {
+const fetchGitlabFileList = async (repoUrl: string, path: string = '', token?: string, ref = 'main'): Promise<string[]> => {
 	const { fullPath } = parseGitlabUrl(repoUrl);
 	const encodedPath = encodeURIComponent(fullPath);
 	const headers: Record<string, string> = {};
 	if (token) headers['PRIVATE-TOKEN'] = token;
 
 	const pathParam = path ? `&path=${encodeURIComponent(path)}` : '';
-	const res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/tree?ref=main${pathParam}`, { headers });
-	if (!res.ok) {
-		logger.error('GitLab file list fetch failed', undefined, { fullPath, path, status: res.status, hasToken: !!token });
-		throw new Error(`GitLab API error: ${res.status}`);
+	const res = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/tree?ref=${ref}${pathParam}`, { headers });
+	if (!res.ok && ref === 'main') {
+		const fallback = await fetch(`https://gitlab.com/api/v4/projects/${encodedPath}/repository/tree?ref=master${pathParam}`, { headers });
+		if (!fallback.ok) throw new Error(`GitLab API error: ${fallback.status}`);
+		const files = (await fallback.json()) as Array<{ name: string }>;
+		return files.map((f) => f.name);
 	}
 	const files = (await res.json()) as Array<{ name: string }>;
 	logger.info('GitLab file list fetched', { fullPath, path: path || 'root', count: files.length });

@@ -17,11 +17,6 @@ interface CloudflareEnv extends __BaseEnv_CloudflareEnv {
   SCAN_QUEUE: Queue;
   MIGRATION_QUEUE: Queue;
 
-  // AUTH
-  NEXTAUTH_SECRET: string
-  NEXTAUTH_URL: string
-  GOOGLE_CLIENT_ID: string
-  GOOGLE_CLIENT_SECRET: string
 
   // Elastic
   ELASTIC_URL: string
@@ -43,8 +38,10 @@ interface CloudflareEnv extends __BaseEnv_CloudflareEnv {
   GOOGLE_CLOUD_LOCATION: string
   GEMINI_API_KEY: string
   GROQ_API_KEY: string
+  GOOGLE_CLOUD_ENGINE_ID: string
 
   NPM_TOKEN: string
+  GCP_SERVICE_ACCOUNT: string
 }
 type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;

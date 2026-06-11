@@ -5,6 +5,8 @@ import { statusRouter } from '@backend/routes/status';
 import { tokenRouter } from '@backend/routes/token';
 import { successResponse } from '@backend/util/response';
 import { Hono } from 'hono';
+import { mcpRouter } from './mcp';
+import { elasticRouter } from './elastic';
 
 const mainRouter = new Hono();
 
@@ -16,5 +18,7 @@ mainRouter.route('/status', statusRouter);
 mainRouter.route('/simulate', simulateRouter);
 mainRouter.route('/migrate', migrateRouter);
 mainRouter.route('/tokens', tokenRouter);
+mainRouter.route('/mcp', mcpRouter);
+mainRouter.route('/elastic', elasticRouter);
 
 export default mainRouter;

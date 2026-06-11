@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { GithubIcon, GitlabIcon } from '@/components/icons';
 import type { ApiResponse, StatusResponse } from '@/types';
 
-const POLL_INTERVAL = 2000;
+const POLL_INTERVAL = 1000;
 
 function ScanPageComponent() {
 	const searchParams = useSearchParams();
@@ -16,6 +16,7 @@ function ScanPageComponent() {
 
 	const [job, setJob] = useState<StatusResponse | null>(null);
 	const [error, setError] = useState('');
+	const [redirecting, setRedirecting] = useState(false);
 
 	const poll = useCallback(async () => {
 		if (!jobId) return;
@@ -45,9 +46,8 @@ function ScanPageComponent() {
 
 		const interval = setInterval(() => {
 			setJob((prev) => {
-				if (prev?.status === 'complete' || prev?.status === 'error') {
+				if (prev?.status === 'error') {
 					clearInterval(interval);
-					return prev;
 				}
 				return prev;
 			});
@@ -57,19 +57,28 @@ function ScanPageComponent() {
 		return () => clearInterval(interval);
 	}, [jobId, poll, router]);
 
-	// Redirect to dashboard when complete
 	useEffect(() => {
-		if (job?.status === 'complete' || job?.status === 'error') {
+		if (!job || redirecting) return;
+
+		const shouldRedirect =
+			job.status === 'complete' ||
+			(job.status === 'scanning' && job.aiEnriching) ||
+			(job.results && job.results.length > 0 && job.progress === job.total && job.total > 0);
+
+		if (shouldRedirect) {
+			setRedirecting(true);
 			const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
 			const updated = history.map((s: any) => (s.jobId === jobId ? { ...s, status: job.status } : s));
 			localStorage.setItem('depshield_scans', JSON.stringify(updated));
+			setTimeout(() => router.push(`/dashboard?jobId=${jobId}`), 500);
 		}
-		if (job?.status === 'complete') {
-			setTimeout(() => {
-				router.push(`/dashboard?jobId=${jobId}`);
-			}, 1000);
+
+		if (job.status === 'error') {
+			const history = JSON.parse(localStorage.getItem('depshield_scans') ?? '[]');
+			const updated = history.map((s: any) => (s.jobId === jobId ? { ...s, status: 'error' } : s));
+			localStorage.setItem('depshield_scans', JSON.stringify(updated));
 		}
-	}, [job?.status, jobId, router]);
+	}, [job?.status, job?.aiEnriching, job?.progress, job?.total, job?.results, jobId, router, redirecting]);
 
 	if (!jobId) return null;
 
@@ -79,6 +88,7 @@ function ScanPageComponent() {
 		{
 			pending: 'Initializing...',
 			scanning: 'Scanning dependencies...',
+			enriching: 'Scan complete, preparing AI analysis...',
 			complete: 'Scan complete!',
 			error: 'Scan failed',
 		}[job?.status ?? 'pending'] ?? 'Loading...';
@@ -86,7 +96,6 @@ function ScanPageComponent() {
 	return (
 		<div className="min-h-screen flex flex-col items-center justify-center px-4 py-16">
 			<div className="w-full max-w-lg">
-				{/* Header */}
 				<div className="mb-8 text-center">
 					<h1 className="text-2xl font-bold text-foreground mb-2">
 						{job?.status === 'complete' ? 'Scan Complete' : 'Scanning Repository'}
@@ -94,9 +103,7 @@ function ScanPageComponent() {
 					<p className="text-muted-foreground text-sm">{job?.repoUrl ?? 'Loading...'}</p>
 				</div>
 
-				{/* Status Card */}
 				<div className="bg-card border border-border rounded-xl p-6 mb-4">
-					{/* Platform + Ecosystem badges */}
 					<div className="flex items-center gap-2 mb-5">
 						{job?.platform === 'github' ? (
 							<div className="flex items-center gap-1.5 text-muted-foreground text-xs">
@@ -123,27 +130,33 @@ function ScanPageComponent() {
 						)}
 					</div>
 
-					{/* Progress */}
 					<div className="mb-4">
 						<div className="flex justify-between text-xs text-muted-foreground mb-2">
-							<span>{statusLabel}</span>
+							<span>{redirecting ? 'Redirecting to results...' : statusLabel}</span>
 							<span>{job?.total ? `${job.progress}/${job.total} packages` : ''}</span>
 						</div>
 
-						{/* Progress bar */}
 						<div className="h-1.5 bg-muted rounded-full overflow-hidden">
-							<div
-								className="h-full bg-primary rounded-full transition-all duration-500"
-								style={{
-									width: job?.status === 'pending' ? '5%' : job?.status === 'complete' ? '100%' : `${Math.max(progressPercent, 8)}%`,
-								}}
-							/>
+							{job?.status === 'scanning' && job.progress === 0 ? (
+								<div className="h-full w-1/3 bg-primary rounded-full animate-[slide_1.4s_ease-in-out_infinite]" />
+							) : (
+								<div
+									className="h-full bg-primary rounded-full transition-all duration-500"
+									style={{
+										width:
+											job?.status === 'pending'
+												? '5%'
+												: job?.status === 'complete' || redirecting
+													? '100%'
+													: `${Math.max(progressPercent, 8)}%`,
+									}}
+								/>
+							)}
 						</div>
 					</div>
 
-					{/* Status indicator */}
 					<div className="flex items-center gap-2">
-						{job?.status === 'complete' ? (
+						{job?.status === 'complete' || job?.status === 'enriching' ? (
 							<div className="w-2 h-2 rounded-full bg-risk-safe" />
 						) : job?.status === 'error' ? (
 							<div className="w-2 h-2 rounded-full bg-destructive" />
@@ -151,7 +164,7 @@ function ScanPageComponent() {
 							<div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
 						)}
 						<span className="text-xs text-muted-foreground">
-							{job?.status === 'complete'
+							{job?.status === 'complete' || job?.status === 'enriching'
 								? `${job.total} packages scanned`
 								: job?.status === 'error'
 									? (job.error ?? 'An error occurred')
@@ -160,7 +173,6 @@ function ScanPageComponent() {
 					</div>
 				</div>
 
-				{/* All detected ecosystems */}
 				{job?.allDetected && job.allDetected.length > 1 && (
 					<div className="bg-card border border-border rounded-xl p-4 mb-4">
 						<p className="text-xs text-muted-foreground mb-3">Detected ecosystems</p>
@@ -181,19 +193,16 @@ function ScanPageComponent() {
 					</div>
 				)}
 
-				{/* Error state */}
 				{(error || job?.status === 'error') && (
 					<div className="bg-destructive/10 border border-destructive/30 rounded-xl p-4 mb-4">
 						<p className="text-destructive text-sm">{error || job?.error}</p>
 					</div>
 				)}
 
-				{/* Actions */}
 				<div className="flex gap-3">
 					<Button variant="outline" onClick={() => router.push('/')} className="flex-1">
 						New Scan
 					</Button>
-
 					{job?.status === 'complete' && (
 						<Button onClick={() => router.push(`/dashboard?jobId=${jobId}`)} className="flex-1">
 							View Results
